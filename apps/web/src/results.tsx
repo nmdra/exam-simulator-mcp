@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CandidateQuestion, QuestionResult, ResponseValue, ResultView } from '@exam-runtime/core';
 import { api, errorMessage, examPath, sessionPath } from './api';
+import { ExplanationPanel, ExplanationUpdates, useExplanations } from './explanations';
 import { elapsedDisplay, formatPercent, formatScore, gradingLabel, Icon, LoadState, Notice, PageTitle, Shell, usePage } from './ui';
 
 const outcomeText = { correct: 'Correct', incorrect: 'Incorrect', unanswered: 'Unanswered', agent_scored: 'Scored' };
@@ -12,7 +13,9 @@ function describeResponse(question: CandidateQuestion, response: ResponseValue) 
   return (Array.isArray(response) ? response : [response]).map((id) => question.options?.find((option) => option.id === id)?.text ?? id).join('\n');
 }
 
-function QuestionReview({ row, number }: { row: QuestionResult; number: number }) {
+function QuestionReview({ row, number, explanations }: {
+  row: QuestionResult; number: number; explanations: ReturnType<typeof useExplanations>;
+}) {
   return <details className="review-item">
     <summary>
       <div className="review-label"><span className="eyebrow">Question {number} · {row.domain}</span><span className="review-question">{row.question.text}</span></div>
@@ -25,6 +28,7 @@ function QuestionReview({ row, number }: { row: QuestionResult; number: number }
         {row.correct_answers && <div><dt>Answer key</dt><dd className="prose-text">{describeResponse(row.question, row.correct_answers)}</dd></div>}
         {row.feedback && <div><dt>Feedback</dt><dd className="prose-text">{row.feedback}</dd></div>}
       </dl>
+      <ExplanationPanel state={explanations} questionId={row.question_id} incorrect={row.outcome === 'incorrect'} />
     </div>
   </details>;
 }
@@ -40,6 +44,7 @@ function SubmissionFacts({ view }: { view: ResultView }) {
 
 function Graded({ view }: { view: Extract<ResultView, { status: 'graded' }> }) {
   const { result } = view;
+  const explanations = useExplanations(view.session_id, result.questions.length > 0);
   return <>
     <div className="overview-grid result-grid">
       <section className="surface score-panel" aria-labelledby="score-heading">
@@ -68,7 +73,11 @@ function Graded({ view }: { view: Extract<ResultView, { status: 'graded' }> }) {
     </section>
     <section className="surface panel result-section" aria-labelledby="review-heading">
       <h2 id="review-heading">Question review</h2>
-      {result.questions.length ? <><p className="small">Expand a question to see your response, score, and any feedback.</p><div className="review-list">{result.questions.map((row, index) => <QuestionReview key={row.question_id} row={row} number={index + 1} />)}</div></> : <p>Question review is not available for this exam.</p>}
+      {result.questions.length ? <>
+        <p className="small">Expand a question to see your response, score, and any feedback.</p>
+        <ExplanationUpdates state={explanations} />
+        <div className="review-list">{result.questions.map((row, index) => <QuestionReview key={row.question_id} row={row} number={index + 1} explanations={explanations} />)}</div>
+      </> : <p>Question review is not available for this exam.</p>}
     </section>
   </>;
 }

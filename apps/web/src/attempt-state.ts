@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import type { ResponseValue, SessionView } from '@exam-runtime/core';
 import { api, ApiError, errorMessage, resultPath } from './api';
 
-type Change = { question: string } & ({ kind: 'answer'; value: ResponseValue } | { kind: 'flag'; flagged: boolean });
+type Change = { question: string } & (
+  | { kind: 'answer'; value: ResponseValue }
+  | { kind: 'flag'; flagged: boolean }
+  | { kind: 'navigation' }
+);
 type ClockOrigin = { remaining: number; measuredAt: number };
 
 function measure(session: SessionView): ClockOrigin {
@@ -11,6 +15,12 @@ function measure(session: SessionView): ClockOrigin {
 
 function remaining(origin: ClockOrigin) {
   return Math.max(0, Math.ceil((origin.remaining - (performance.now() - origin.measuredAt)) / 1000));
+}
+
+function saveChange(id: string, revision: number, change: Change): Promise<SessionView> {
+  if (change.kind === 'answer') return api.answer(id, change.question, change.value, revision);
+  if (change.kind === 'flag') return api.flag(id, change.question, change.flagged, revision);
+  return api.currentQuestion(id, change.question, revision);
 }
 
 export function useAttempt(initial: SessionView) {
@@ -109,11 +119,7 @@ export function useAttempt(initial: SessionView) {
       while (queued.current && !isClosed()) {
         const change = queued.current;
         try {
-          const revision = latest.current.revision;
-          const next = change.kind === 'answer'
-            ? await api.answer(id, change.question, change.value, revision)
-            : await api.flag(id, change.question, change.flagged, revision);
-          accept(next);
+          accept(await saveChange(id, latest.current.revision, change));
           // A new text edit can arrive during the request. Keep it until its own write completes.
           if (queued.current === change) updateDraft(null);
         } catch (cause) {
@@ -158,6 +164,13 @@ export function useAttempt(initial: SessionView) {
     void flush();
   }
 
+  function changeQuestion(question: string): Promise<boolean> {
+    if (isClosed() || queued.current) return Promise.resolve(false);
+    if (question === latest.current.current_question_id) return Promise.resolve(true);
+    updateDraft({ kind: 'navigation', question });
+    return flush();
+  }
+
   async function prepareToLeave() {
     if (submitting || closing.current) return false;
     if (isClosed()) {
@@ -188,7 +201,7 @@ export function useAttempt(initial: SessionView) {
 
   return {
     session, seconds, expired: session.expired || seconds === 0, draft, saving, submitting, saveError, submitError, clockError,
-    changeAnswer, changeFlag, prepareToLeave, submit,
+    changeAnswer, changeFlag, changeQuestion, prepareToLeave, submit,
     retrySave: () => void flush(),
     discard: () => { if (!active.current) { updateDraft(null); setSaveError(''); } },
     retryClock: () => setClockAttempt((value) => value + 1),

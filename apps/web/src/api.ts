@@ -1,4 +1,7 @@
-import type { ExamSummary, ResponseValue, ResultView, SessionView } from '@exam-runtime/core';
+import type { ExamSummary, ExplanationService, ExplanationType, ResponseValue, ResultView, SessionView } from '@exam-runtime/core';
+
+export type ExplanationsSnapshot = ReturnType<ExplanationService['forSession']>;
+type ExplanationReference = ReturnType<ExplanationService['request']>;
 
 type ErrorEnvelope = { error: { code: string; message: string; details: unknown } };
 
@@ -26,6 +29,8 @@ async function request<T>(path: string, method: 'GET' | 'POST' | 'PUT' = 'GET', 
 export const examPath = (id: string) => `/exams/${encodeURIComponent(id)}`;
 export const sessionPath = (id: string) => `/sessions/${encodeURIComponent(id)}`;
 export const resultPath = (id: string) => `${sessionPath(id)}/results`;
+const explanationsPath = (id: string) => `${sessionPath(id)}/explanations`;
+export const explanationEventsUrl = (id: string) => `/api${explanationsPath(id)}/events`;
 
 export const api = {
   exams: (signal?: AbortSignal) => request<ExamSummary[]>('/exams', 'GET', undefined, signal),
@@ -36,6 +41,11 @@ export const api = {
     request<SessionView>(`${sessionPath(id)}/responses/${encodeURIComponent(questionId)}`, 'PUT', { value, revision }),
   flag: (id: string, questionId: string, flagged: boolean, revision: number) =>
     request<SessionView>(`${sessionPath(id)}/flags/${encodeURIComponent(questionId)}`, 'PUT', { flagged, revision }),
+  currentQuestion: (id: string, questionId: string, revision: number) =>
+    request<SessionView>(`${sessionPath(id)}/current-question`, 'PUT', { question_id: questionId, revision }),
+  explanations: (id: string, signal?: AbortSignal) => request<ExplanationsSnapshot>(explanationsPath(id), 'GET', undefined, signal),
+  requestExplanation: (id: string, questionId: string, type: ExplanationType, signal?: AbortSignal) =>
+    request<ExplanationReference>(explanationsPath(id), 'POST', { question_id: questionId, type }, signal),
   submit: (id: string) => request<ResultView>(`${sessionPath(id)}/submit`, 'POST', {}),
   results: (id: string, signal?: AbortSignal) => request<ResultView>(resultPath(id), 'GET', undefined, signal),
 };

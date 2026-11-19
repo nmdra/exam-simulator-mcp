@@ -2,17 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CandidateQuestion, ResponseValue, SessionView } from '@exam-runtime/core';
 import { api, resultPath } from './api';
 import { useAttempt } from './attempt-state';
+import { ExplanationPanel, ExplanationUpdates, useExplanations } from './explanations';
 import { clockDisplay, countLabel, Icon, LoadState, Notice, Shell, useHeadingFocus, usePage, useResource } from './ui';
 
 const typeLabels = { single_select: 'Choose one answer', multi_select: 'Choose all that apply', true_false: 'Choose true or false', free_text: 'Write your response' };
-
-function selectedQuestion(session: SessionView) {
-  try {
-    const id = sessionStorage.getItem(`exam-runtime:question:${session.id}`);
-    if (session.questions.some((question) => question.id === id)) return id;
-  } catch { /* Storage may be disabled. */ }
-  return session.questions[0]?.id;
-}
 
 function AnswerField({ question, value, locked, onChange }: {
   question: CandidateQuestion; value: ResponseValue; locked: boolean; onChange: (value: ResponseValue) => void;
@@ -52,13 +45,14 @@ function Timer({ seconds }: { seconds: number }) {
 }
 
 function Workspace({ initial }: { initial: SessionView }) {
-  const { session, seconds, expired, draft, saving, submitting, saveError, submitError, clockError, changeAnswer, changeFlag, prepareToLeave, submit, retrySave, discard, retryClock } = useAttempt(initial);
-  const [selected, setSelected] = useState(() => selectedQuestion(initial));
+  const { session, seconds, expired, draft, saving, submitting, saveError, submitError, clockError, changeAnswer, changeFlag, changeQuestion, prepareToLeave, submit, retrySave, discard, retryClock } = useAttempt(initial);
+  const [expiredSelection, setExpiredSelection] = useState<string>();
   const [preparing, setPreparing] = useState(false);
   const inTransition = useRef(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const submitTrigger = useRef<HTMLButtonElement | null>(null);
+  const selected = (expired ? expiredSelection : undefined) ?? session.current_question_id;
   const index = Math.max(0, session.questions.findIndex((item) => item.id === selected));
   const question = session.questions[index];
   const focus = useHeadingFocus<HTMLHeadingElement>(question?.id);
@@ -67,22 +61,23 @@ function Workspace({ initial }: { initial: SessionView }) {
   const questionDraft = draft?.question === question?.id ? draft : null;
   const total = session.progress.total;
   const autoFinishing = expired && session.auto_submit_on_timeout;
+  const explanations = useExplanations(session.id, !expired && session.status === 'in_progress');
   usePage(session.title);
 
-  async function transition(action: () => void) {
+  async function transition(action: () => void | Promise<boolean>) {
     if (inTransition.current || submitting) return;
     inTransition.current = true;
     setPreparing(true);
-    try { if (await prepareToLeave()) action(); }
+    try { if (await prepareToLeave()) await action(); }
     finally { inTransition.current = false; setPreparing(false); }
   }
 
   function go(nextIndex: number) {
     const next = session.questions[nextIndex];
-    if (!next || next.id === question?.id) return;
+    if (!next || next.id === question?.id || autoFinishing) return;
     void transition(() => {
-      setSelected(next.id);
-      try { sessionStorage.setItem(`exam-runtime:question:${session.id}`, next.id); } catch { /* Storage may be disabled. */ }
+      if (expired) setExpiredSelection(next.id); // Read-only browsing after time expires.
+      else return changeQuestion(next.id);
     });
   }
 
@@ -103,14 +98,15 @@ function Workspace({ initial }: { initial: SessionView }) {
     {clockError && <Notice error>Could not confirm the timer with the server. {clockError} <button className="text-link inline-link" onClick={retryClock}>Check again</button></Notice>}
     {submitError && <Notice error>Could not submit the attempt. {submitError}</Notice>}
     {saveError && <Notice error>{saveError}{!expired && <div className="notice-actions"><button className="button secondary" onClick={retrySave} disabled={saving}>Retry save</button><button className="button subtle" onClick={discard} disabled={saving}>Discard unsaved change</button></div>}</Notice>}
+    <ExplanationUpdates state={explanations} />
     <div className="attempt-grid">
       <section className="surface question-panel" aria-labelledby="question-heading">
         {question && <>
           <div className="question-top"><div className="question-labels"><span className="eyebrow">Question {index + 1} of {total}</span><span className="pill">{question.domain}</span></div>
-            {session.allow_review && <button className="button subtle flag-button" aria-label="Flag for review" aria-pressed={questionDraft?.kind === 'flag' ? questionDraft.flagged : flagged.has(question.id)} disabled={expired || submitting} aria-disabled={!!draft || preparing || undefined} onClick={() => { if (!preparing) changeFlag(question.id, !flagged.has(question.id)); }}><Icon name="flag" />{(questionDraft?.kind === 'flag' ? questionDraft.flagged : flagged.has(question.id)) ? 'Flagged' : 'Flag for review'}</button>}
+            {session.allow_review && <button className="button subtle flag-button" aria-label="Flag for review" aria-pressed={questionDraft?.kind === 'flag' ? questionDraft.flagged : flagged.has(question.id)} disabled={expired || submitting} aria-disabled={!!draft || preparing || undefined} onClick={() => { if (!inTransition.current) changeFlag(question.id, !flagged.has(question.id)); }}><Icon name="flag" />{(questionDraft?.kind === 'flag' ? questionDraft.flagged : flagged.has(question.id)) ? 'Flagged' : 'Flag for review'}</button>}
           </div>
           <h2 id="question-heading" className="question-text prose-text" ref={focus} tabIndex={-1}>{question.text}</h2>
-          <AnswerField key={question.id} question={question} value={questionDraft?.kind === 'answer' ? questionDraft.value : responseById.get(question.id) ?? null} locked={expired || submitting || draft?.kind === 'flag'} onChange={(value) => changeAnswer(question.id, value)} />
+          <AnswerField key={question.id} question={question} value={questionDraft?.kind === 'answer' ? questionDraft.value : responseById.get(question.id) ?? null} locked={expired || submitting || preparing || draft?.kind === 'flag' || draft?.kind === 'navigation'} onChange={(value) => { if (!inTransition.current) changeAnswer(question.id, value); }} />
           <div className="question-foot">
             <span className="save-status" role="status">{saving ? 'Saving…' : draft ? 'Change not saved' : <><Icon name="check" /> Changes saved</>}</span>
             <div className="question-actions">
@@ -119,6 +115,7 @@ function Workspace({ initial }: { initial: SessionView }) {
                 : <button className="button primary" aria-disabled={preparing || undefined} disabled={submitting || autoFinishing} onClick={(event) => confirm(event.currentTarget)}>Submit exam <Icon name="arrow" /></button>}
             </div>
           </div>
+          <ExplanationPanel state={explanations} questionId={question.id} />
         </>}
       </section>
       <aside className="surface navigator" aria-labelledby="navigator-heading">

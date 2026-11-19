@@ -212,6 +212,13 @@ p { color: var(--muted); }
 .review-answers { display: grid; gap: .65rem; margin-top: .65rem; }
 .review-answers dt { font-weight: 700; font-size: .83rem; }
 .review-answers dd { color: var(--muted); font-size: .92rem; }
+.explanation-panel { display: grid; gap: .6rem; margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .9rem; }
+.explanation-item { min-width: 0; display: grid; gap: .6rem; padding: .68rem .76rem; border: 1px solid var(--border); border-radius: .58rem; font-size: .9rem; }
+.explanation-heading { display: flex; flex-wrap: wrap; gap: .4rem .65rem; align-items: center; }
+.explanation-heading .button { min-height: 2.2rem; }
+.explanation-copy > p + p { margin-top: .52rem; }
+.explanation-copy code { background: var(--accent-soft); border-radius: .2rem; padding-inline: .2em; }
+#review-heading ~ .notice { margin-block: .65rem 0; }
 .outcome-correct { color: var(--green); background: var(--green-soft); }
 .outcome-incorrect { color: #8c362e; background: #fbeeea; }
 .outcome-unanswered { color: var(--amber); background: var(--amber-soft); }
