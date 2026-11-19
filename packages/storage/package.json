@@ -1,0 +1,19 @@
+{
+  "name": "@exam-runtime/storage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@exam-runtime/schemas": "0.1.0",
+    "better-sqlite3": "^13.2.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0"
+  }
+}

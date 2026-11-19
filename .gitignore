@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+coverage/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+.env
+.playwright-cli/
