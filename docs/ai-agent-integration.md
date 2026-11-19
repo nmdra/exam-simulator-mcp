@@ -12,18 +12,18 @@ Use Node.js `26.13.1` and a fresh working directory for this demo. The public np
 command -v npx # Save this absolute npx path for the MCP configuration.
 export EXAM_RUNTIME_DB_PATH="$PWD/agent-practice.sqlite3"
 export EXAM_RUNTIME_PORT=3000
-npx --yes exam-runtime-mcp@0.1.0 agent create practice-tutor
+npx --yes exam-runtime-mcp agent create practice-tutor
 
-npm pack exam-runtime-mcp@0.1.0
-tar -xOf exam-runtime-mcp-0.1.0.tgz package/examples/practice-assistance.json > practice-assistance.json
-npx --yes exam-runtime-mcp@0.1.0 exam import practice-assistance.json --agent practice-tutor
+archive=$(npm pack exam-runtime-mcp --silent)
+tar -xOf "$archive" package/examples/practice-assistance.json > practice-assistance.json
+npx --yes exam-runtime-mcp exam import practice-assistance.json --agent practice-tutor
 ```
 
 Save the `token` from `agent create` in your local secret store. The command prints it once. Do not paste it into a model prompt or commit it. Copy the exam ID from `exam import`, then publish and serve it:
 
 ```sh
-npx --yes exam-runtime-mcp@0.1.0 exam publish 'EXAM_ID'
-npx --yes exam-runtime-mcp@0.1.0 serve
+npx --yes exam-runtime-mcp exam publish 'EXAM_ID'
+npx --yes exam-runtime-mcp serve
 ```
 
 Replace `EXAM_ID` with the actual ID. Leave the server running. If you already have a server on port `3000`, pick another free port before running `serve` and use that port in the MCP configuration and browser URL. If the scope already exists but you no longer have its token, use a new scope ID and import a fresh copy of the exam with `--agent` set to that ID.
@@ -37,7 +37,7 @@ In your host's MCP settings, select **stdio**. Use `npx` to start the published 
   "mcpServers": {
     "exam-runtime": {
       "command": "/absolute/path/to/npx",
-      "args": ["--yes", "exam-runtime-mcp@0.1.0", "mcp"],
+      "args": ["--yes", "exam-runtime-mcp", "mcp"],
       "env": {
         "EXAM_RUNTIME_DB_PATH": "/absolute/path/to/agent-practice.sqlite3",
         "EXAM_RUNTIME_PORT": "3000",
@@ -51,7 +51,7 @@ In your host's MCP settings, select **stdio**. Use `npx` to start the published 
 
 Use the host's method for injecting the real token into the spawned process. Set **both** agent variables. If both are omitted, the server uses the trusted local operator profile, not the intended agent scope. The host needs Node.js `26.13.1` on its `PATH` and access to the database. Do not point it at the browser URL or expose the HTTP server to connect a remote-only host.
 
-When testing a local build, run `npm run pack:npm` in the repository and use `["--yes", "--package=/absolute/path/to/exam-runtime-mcp-0.1.0.tgz", "exam-runtime", "mcp"]` as the arguments. To run from source without `npx`, use the [direct Node.js configuration](runtime-reference.md#mcp-over-stdio).
+When testing a local build, run `npm run pack:npm` in the repository and use `["--yes", "--package=/absolute/path/to/exam-runtime-mcp-VERSION.tgz", "exam-runtime", "mcp"]` as the arguments. To run from source without `npx`, use the [direct Node.js configuration](runtime-reference.md#mcp-over-stdio).
 
 Reload the host's MCP configuration. Ask the agent to call `exam_list` with `{"status":"published"}`. It should find **Backup and Recovery Practice** in its scope. Ask it to call `exam_get_ui_url` with that exam ID if you want to check the URL through MCP. An overview link does not start the timer.
 
@@ -88,7 +88,9 @@ The claim lasts two minutes. Prepare the response promptly and submit it with th
 
 Ask the agent to use `exam_create`, `exam_publish`, and `exam_get_ui_url` to make and share a practice set. It can use the [example definition](../examples/practice-assistance.json) as a template. The overview link does not start the timer or show answer keys.
 
-After you submit, give the agent the session ID from the browser URL. Ask it to use `exam_get_results` to identify missed questions and weak domains. It can explain the concepts and create a fresh, shorter practice set for those topics. The runtime does not automatically retain a model-side learning history, so share the relevant session IDs when you switch chats or hosts.
+After you submit, ask the agent to call `exam_list_sessions` with `{"exam_id":"EXAM_ID","status":"graded","limit":5}`, using the exam ID it received from `exam_create`. The list is newest-first and contains no candidate answers or keys. If multiple attempts could match, ask the agent to confirm which one to review. It can call `exam_get_results` using that attempt's `session_id`, explain missed concepts, and create a short follow-up quiz for the weakest topics.
+
+`exam_list_sessions` requires version `0.1.1` or later. On older versions, copy the session ID from the browser URL. Exam Runtime keeps results in SQLite, but it does not maintain model-side learning history automatically.
 
 ## 5. Run an unattended worker (optional)
 

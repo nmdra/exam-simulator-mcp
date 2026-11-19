@@ -1,6 +1,6 @@
 {
   "name": "exam-runtime",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "repository": {
@@ -19,6 +19,7 @@
     "build:backend": "tsc -b packages/cli packages/mcp",
     "typecheck": "tsc -b",
     "pack:npm": "npm run build && node scripts/pack-npm.mjs",
+    "test:npm-package": "node scripts/test-npm-package.mjs",
     "test": "npm run build:backend && vitest run",
     "test:watch": "npm run build:backend && vitest",
     "cli": "node packages/cli/dist/main.js",

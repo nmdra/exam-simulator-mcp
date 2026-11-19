@@ -1,6 +1,6 @@
 # Release Exam Runtime
 
-Pushing a new stable version tag (`vMAJOR.MINOR.PATCH`) starts [the release workflow](../.github/workflows/release.yml). It checks that the tag matches the root `package.json` and points to a commit on `main`. It runs the tests, builds the npm tarball, and checks the packaged CLI outside the source workspace. It then uses npm Trusted Publishing to publish `exam-runtime-mcp` and creates the GitHub release with the same tarball attached. Pushing `main` alone does not publish anything.
+Pushing a new stable version tag (`vMAJOR.MINOR.PATCH`) starts [the release workflow](../.github/workflows/release.yml). It checks that the tag matches the root `package.json` and points to a commit on `main`. It runs the tests, builds the npm tarball, and checks the packaged MCP server over stdio outside the source workspace. It then uses npm Trusted Publishing to publish `exam-runtime-mcp` and creates the GitHub release with the same tarball attached. Pushing `main` alone does not publish anything.
 
 ## One-time npm setup
 

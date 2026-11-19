@@ -49,12 +49,20 @@ export const storedResponsesSchema = z.array(z.strictObject({
   updated_at: timestamp,
 }));
 
-const sessionTiming = {
+const sessionTimestamps = {
   started_at: timestamp,
   deadline_at: timestamp,
   submitted_at: timestamp.nullable(),
-  submission_reason: submissionReasonSchema.nullable(),
 };
+const sessionTiming = { ...sessionTimestamps, submission_reason: submissionReasonSchema.nullable() };
+
+export const sessionSummarySchema = z.strictObject({
+  session_id: entityIdSchema,
+  exam_id: entityIdSchema,
+  status: sessionStatusSchema,
+  ...sessionTimestamps,
+  updated_at: timestamp,
+});
 
 export const sessionViewSchema = z.strictObject({
   id: entityIdSchema,

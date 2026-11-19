@@ -9,7 +9,7 @@ Use Node.js `26.13.1`. Follow the [AI agent integration guide](docs/ai-agent-int
 The MCP host launches this command:
 
 ```sh
-npx --yes exam-runtime-mcp@0.1.0 mcp
+npx --yes exam-runtime-mcp mcp
 ```
 
 Then ask your agent:

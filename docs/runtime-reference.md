@@ -24,14 +24,15 @@ For development, run `npm run dev:api` and `npm run dev:web` in separate termina
 
 ### Run the npm package with npx
 
-From the repository root, run `npm ci` and `npm run pack:npm`. This builds the CLI, browser UI, and stdio server into `dist/npm/exam-runtime-mcp-0.1.0.tgz`. The tarball works outside the repository. Its runtime dependencies install through npm.
+From the repository root, run `npm ci` and `npm run pack:npm`. This builds the CLI, browser UI, and stdio server into `dist/npm/exam-runtime-mcp-VERSION.tgz`. The tarball works outside the repository. Its runtime dependencies install through npm.
 
 ```sh
 # Use the absolute tarball path when launching from a different directory.
-npx --yes --package="$PWD/dist/npm/exam-runtime-mcp-0.1.0.tgz" exam-runtime --help
+version=$(node -p 'require("./package.json").version')
+npx --yes --package="$PWD/dist/npm/exam-runtime-mcp-$version.tgz" exam-runtime --help
 ```
 
-Use `exam-runtime mcp` with that same `npx --package=…` launcher in your host's stdio configuration. See the [AI agent integration guide](ai-agent-integration.md#2-register-the-mcp-server-in-your-agent-host). To use the published version instead of a local tarball, run `npx --yes exam-runtime-mcp@0.1.0 mcp`.
+Use `exam-runtime mcp` with that same `npx --package=…` launcher in your host's stdio configuration. See the [AI agent integration guide](ai-agent-integration.md#2-register-the-mcp-server-in-your-agent-host). To use the published version instead of a local tarball, run `npx --yes exam-runtime-mcp mcp`.
 
 ## Data and port
 
@@ -166,6 +167,7 @@ With both credential variables unset, MCP uses the trusted `local` operator prof
 | `exam_list` | `{}` or optional `status` and `subject`: find exam summaries. |
 | `exam_get` | `{exam_id}`: read the full definition, including any keys. |
 | `exam_get_ui_url` | `{exam_id}`: get the published exam overview URL. Check `data.available` before sharing it; if false, read `data.message`. Does not start a session. |
+| `exam_list_sessions` | `{exam_id?, status?, limit?}`: list recent attempts in the exact agent scope, with IDs, status, and timestamps only. Newest start time first. Default limit 20, maximum 100. |
 | `exam_get_session` | `{session_id}`: read the attempt, candidate-safe questions, responses, and progress. |
 | `exam_get_answers` | `{session_id}`: read the saved response rows by question ID. |
 | `exam_get_results` | `{session_id}`: read status and trusted results. `data.result` is `null` until graded. |
@@ -176,7 +178,7 @@ With both credential variables unset, MCP uses the trusted `local` operator prof
 | `explanation_claim` | `{request_id}`: claim a pending request. Returns `claim_token` and `expires_at` (Unix milliseconds). |
 | `explanation_submit` | `{request_id, claim_token, content}`: complete a request using the token from the claim. |
 
-Typical flow: create or find an exam, publish it, and get its UI URL. The candidate starts and submits in the browser. Get the session ID from `/sessions/<session-id>` or `/sessions/<session-id>/results`. Check results. If status is `pending_grading`, read the session and responses, submit all grades, then check results again. There is no MCP tool to start an attempt, write candidate answers, or submit the candidate attempt.
+Typical flow: create or find an exam, publish it, and get its UI URL. The candidate starts and submits in the browser. Find the attempt ID with `exam_list_sessions` or copy it from `/sessions/<session-id>` or `/sessions/<session-id>/results`. Check results. If status is `pending_grading`, read the session and responses, submit all grades, then check results again. There is no MCP tool to start an attempt, write candidate answers, or submit the candidate attempt.
 
 For assistance, list pending requests or read the pending resource. Claim a request, read its permitted context, and submit its content. The claim lasts two minutes. An expired claim returns to `pending` until the third expired claim, when it becomes `failed`. Competing workers can receive `CONFLICT`; refresh the queue instead of using another worker's claim. Keep claim tokens private.
 

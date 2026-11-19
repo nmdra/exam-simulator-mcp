@@ -56,14 +56,10 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run pack:npm
-      - name: Check the package outside the workspace
-        working-directory: ${{ runner.temp }}
-        shell: bash
-        run: |
-          file="exam-runtime-mcp-${GITHUB_REF_NAME#v}.tgz"
-          archive="$GITHUB_WORKSPACE/dist/npm/$file"
-          EXAM_RUNTIME_DB_PATH="$RUNNER_TEMP/release-smoke.sqlite3" \
-            npx --yes --package="$archive" exam-runtime init
+      - name: Test the packaged MCP server outside the workspace
+        env:
+          ARCHIVE: ${{ steps.version.outputs.archive }}
+        run: npm run test:npm-package -- "$ARCHIVE"
       # actions/upload-artifact v7.0.2
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

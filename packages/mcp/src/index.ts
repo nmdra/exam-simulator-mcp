@@ -1,8 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { checkExamUi, createRevisionWatcher, openRuntime, RuntimeError } from '@exam-runtime/core';
 import type { AgentPrincipal, ErrorDetail, ExamRuntime } from '@exam-runtime/core';
 import {
   agentGradesSchema, claimTokenSchema, entityIdSchema, examDefinitionSchema, examFilterSchema,
-  explanationContentSchema, explanationStatusSchema,
+  explanationContentSchema, explanationStatusSchema, sessionListFilterSchema,
 } from '@exam-runtime/schemas';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { CallToolResult, Transport } from '@modelcontextprotocol/server';
@@ -10,7 +11,7 @@ import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/s
 import { z } from 'zod';
 import {
   examRecordSchema, examStateSchema, examSummarySchema, examUiSchema, explanationDetailSchema,
-  explanationRequestSummarySchema, explanationViewSchema, resultViewSchema, sessionViewSchema,
+  explanationRequestSummarySchema, explanationViewSchema, resultViewSchema, sessionSummarySchema, sessionViewSchema,
   storedResponsesSchema, toolErrorSchema,
 } from './tool-schemas.js';
 import { authenticateAgent, filterListenResources, registerResources } from './resources.js';
@@ -30,6 +31,16 @@ function result(payload: { data: unknown } | { error: ToolError }): CallToolResu
     return response;
   } catch (cause) {
     throw new Error('Could not encode the tool response.', { cause });
+  }
+}
+
+function readServerVersion() {
+  const manifest = new URL('../../../package.json', import.meta.url);
+  try {
+    const version = z.object({ version: z.string().min(1) });
+    return version.parse(JSON.parse(readFileSync(manifest, 'utf8'))).version;
+  } catch (cause) {
+    throw new Error('Cannot read the Exam Runtime version.', { cause });
   }
 }
 
@@ -104,7 +115,7 @@ function registerTool<Input extends z.ZodObject, Output extends z.ZodType>(
 }
 
 export function createMcpServer(runtime: ExamRuntime, subscribe = false): McpServer {
-  const server = new McpServer({ name: 'exam-runtime', version: '0.1.0' }, {
+  const server = new McpServer({ name: 'exam-runtime', version: readServerVersion() }, {
     capabilities: { resources: { subscribe } },
   });
 
@@ -130,6 +141,8 @@ export function createMcpServer(runtime: ExamRuntime, subscribe = false): McpSer
       runtime.assertExamAccess(exam_id, principal);
       return runtime.getExam(exam_id);
     });
+  registerTool(server, runtime, 'exam_list_sessions', 'List recent attempts in your scope without questions, answers, or results.',
+    sessionListFilterSchema, z.array(sessionSummarySchema), (filter, principal) => runtime.listSessions(principal, filter));
   registerTool(server, runtime, 'exam_get_session', 'Get a candidate session, including progress and status.',
     sessionId, sessionViewSchema, ({ session_id }, principal) => {
       runtime.assertSessionAccess(session_id, principal);

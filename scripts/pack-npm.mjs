@@ -61,7 +61,7 @@ try {
   }
 
   const launcher = 'packages/cli/bin/exam-runtime.js';
-  const files = [launcher, 'apps/web/dist', 'README.md', 'docs/ai-agent-integration.md',
+  const files = [launcher, 'apps/web/dist', 'README.md', 'CHANGELOG.md', 'docs/ai-agent-integration.md',
     'docs/runtime-reference.md', 'docs/releasing.md', 'examples/aws-practice.json', 'examples/practice-assistance.json'];
   await Promise.all(files.map((path) => cp(join(repository, path), join(stage, path), { recursive: true })));
   await chmod(join(stage, launcher), 0o755);

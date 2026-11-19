@@ -12,6 +12,11 @@ export const agentIdSchema = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9_-
 export const examModeSchema = z.enum(['exam', 'practice', 'learning']);
 export const examStatusSchema = z.enum(['draft', 'published']);
 export const sessionStatusSchema = z.enum(['in_progress', 'pending_grading', 'graded']);
+export const sessionListFilterSchema = z.strictObject({
+  exam_id: entityIdSchema.optional(),
+  status: sessionStatusSchema.optional(),
+  limit: z.number().int().min(1).max(100).default(20),
+});
 export const submissionReasonSchema = z.enum(['manual', 'timeout']);
 export const gradingModeSchema = z.enum(['answer_key', 'agent_graded']);
 export const questionTypeSchema = z.enum(['single_select', 'multi_select', 'true_false', 'free_text']);

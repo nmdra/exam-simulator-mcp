@@ -137,6 +137,11 @@ const migrations = [
     CREATE INDEX exam_sessions_manual_timeout_due ON exam_sessions (deadline_at, id)
       WHERE status = 'in_progress' AND auto_submit_on_timeout = 0 AND timeout_observed = 0;
   `,
+  `
+    CREATE INDEX exam_sessions_by_scope_recent ON exam_sessions (agent_scope, started_at DESC, id DESC);
+    CREATE INDEX exam_sessions_by_scope_exam_recent ON exam_sessions (agent_scope, exam_id, started_at DESC, id DESC);
+    CREATE INDEX exam_sessions_by_scope_status_recent ON exam_sessions (agent_scope, status, started_at DESC, id DESC);
+  `,
 ];
 
 export function migrate(db: Database.Database): void {
