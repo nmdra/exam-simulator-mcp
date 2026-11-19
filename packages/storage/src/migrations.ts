@@ -66,6 +66,72 @@ const migrations = [
       PRIMARY KEY (session_id, question_id)
     ) STRICT;
   `,
+  `
+    ALTER TABLE exams ADD COLUMN agent_scope TEXT NOT NULL DEFAULT 'local';
+    ALTER TABLE exam_sessions ADD COLUMN agent_scope TEXT NOT NULL DEFAULT 'local';
+    ALTER TABLE exam_sessions ADD COLUMN current_question_id TEXT;
+    ALTER TABLE exam_sessions ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
+    UPDATE exam_sessions AS s SET updated_at = max(
+      s.started_at,
+      coalesce(s.submitted_at, s.started_at),
+      coalesce((SELECT max(r.updated_at) FROM session_responses AS r WHERE r.session_id = s.id), s.started_at),
+      coalesce((SELECT r.created_at FROM exam_results AS r WHERE r.session_id = s.id), s.started_at)
+    );
+
+    CREATE INDEX exams_by_scope ON exams (agent_scope, created_at DESC, id);
+    CREATE INDEX exams_by_scope_status ON exams (agent_scope, status, created_at DESC, id);
+    CREATE INDEX exams_by_scope_subject ON exams (agent_scope, subject, created_at DESC, id);
+
+    CREATE TABLE agent_credentials (
+      id TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    ) STRICT;
+
+    CREATE TABLE change_versions (
+      key TEXT PRIMARY KEY,
+      version INTEGER NOT NULL CHECK (version > 0)
+    ) STRICT;
+
+    CREATE TABLE explanation_requests (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL REFERENCES exam_sessions(id) ON DELETE CASCADE,
+      question_id TEXT NOT NULL,
+      agent_scope TEXT NOT NULL,
+      type TEXT NOT NULL CHECK (type IN ('hint', 'detailed', 'why_wrong')),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'cancelled')),
+      attempt_count INTEGER NOT NULL CHECK (attempt_count >= 0),
+      claim_owner TEXT,
+      claim_hash TEXT,
+      claim_expires_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE (id, session_id, question_id)
+    ) STRICT;
+    CREATE UNIQUE INDEX explanation_requests_equivalent
+      ON explanation_requests (session_id, question_id, type)
+      WHERE status IN ('pending', 'processing', 'completed');
+    CREATE INDEX explanation_requests_by_scope
+      ON explanation_requests (agent_scope, created_at, id);
+    CREATE INDEX explanation_requests_by_scope_status
+      ON explanation_requests (agent_scope, status, created_at, id);
+    CREATE INDEX explanation_requests_by_session
+      ON explanation_requests (session_id, created_at DESC, id);
+    CREATE INDEX explanation_requests_expiring
+      ON explanation_requests (claim_expires_at, id) WHERE status = 'processing';
+
+    CREATE TABLE explanations (
+      id TEXT PRIMARY KEY,
+      request_id TEXT NOT NULL UNIQUE,
+      session_id TEXT NOT NULL,
+      question_id TEXT NOT NULL,
+      content_json TEXT NOT NULL CHECK (json_valid(content_json) AND json_type(content_json) = 'object'),
+      completed_at INTEGER NOT NULL,
+      FOREIGN KEY (request_id, session_id, question_id)
+        REFERENCES explanation_requests (id, session_id, question_id) ON DELETE CASCADE
+    ) STRICT;
+    CREATE INDEX explanations_by_session ON explanations (session_id, completed_at DESC, id);
+  `,
 ];
 
 export function migrate(db: Database.Database): void {

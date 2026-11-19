@@ -33,6 +33,8 @@ export interface SessionView {
   submitted_at: number | null;
   submission_reason: SubmissionReason | null;
   revision: number;
+  updated_at: number;
+  current_question_id: string;
   server_now: number;
   expired: boolean;
   allow_review: boolean;
@@ -42,6 +44,26 @@ export interface SessionView {
   responses: StoredResponse[];
   flagged_question_ids: string[];
   progress: { total: number; answered: number; unanswered: number; flagged: number };
+}
+
+export interface AgentPrincipal { scope: string; operator: boolean }
+
+export interface ExamState {
+  session_id: string;
+  exam_id: string;
+  title: string;
+  subject: string;
+  mode: ExamDefinition['exam']['mode'];
+  status: SessionStatus;
+  revision: number;
+  updated_at: string;
+  server_now: string;
+  deadline_at: string;
+  timer: { duration_seconds: number; elapsed_seconds: number; remaining_seconds: number; is_expired: boolean };
+  progress: { total_questions: number; answered: number; unanswered: number; flagged: number; current_question_id: string };
+  flagged_question_ids: string[];
+  responses?: (StoredResponse & { is_flagged: boolean; selected_answers?: string[] })[];
+  grading: { status: 'not_started' | 'pending_grading' | 'graded'; result_available: boolean };
 }
 
 export interface QuestionResult {
@@ -92,5 +114,5 @@ export type ResultView = ResultHeader & (
   | { status: 'graded'; result: ExamResult }
 );
 
-export type { AgentGrade, ExamDefinition, ExamFilter, ExamStatus, ResponseValue } from '@exam-runtime/schemas';
+export type { AgentGrade, ExamDefinition, ExamFilter, ExamStatus, ExplanationStatus, ExplanationType, ResponseValue } from '@exam-runtime/schemas';
 export type { ExamRecord, StoredResponse } from '@exam-runtime/storage';

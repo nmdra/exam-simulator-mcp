@@ -1,31 +1,27 @@
-import { randomInt, randomUUID } from 'node:crypto';
-import { agentGradesSchema, examDefinitionSchema, responseSchema, revisionSchema } from '@exam-runtime/schemas';
+import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import { agentGradesSchema, agentIdSchema, examDefinitionSchema, responseSchema, revisionSchema } from '@exam-runtime/schemas';
 import type { ExamFilter, Question, ResponseValue, SubmissionReason } from '@exam-runtime/schemas';
 import { databasePath, openStorage } from '@exam-runtime/storage';
 import type { ExamRecord, SessionRecord, Storage } from '@exam-runtime/storage';
-import type { ExamResult, ExamSummary, ResultView, SessionView } from './contracts.js';
+import type { AgentPrincipal, ExamResult, ExamState, ExamSummary, ResultView, SessionView } from './contracts.js';
+import { RuntimeError, validated } from './errors.js';
+import { ExplanationService } from './explanations.js';
 import { candidateQuestion, computeResult, gradeLimit, maximumPoints } from './grading.js';
 
 export * from './contracts.js';
+export * from './errors.js';
+export * from './explanations.js';
 export * from './local-ui.js';
+export * from './revisions.js';
 export { databasePath };
 
-export type ErrorCode = 'VALIDATION' | 'NOT_FOUND' | 'CONFLICT' | 'UI_UNAVAILABLE';
-export interface ErrorDetail { path: (string | number)[]; message: string }
-export class RuntimeError extends Error {
-  constructor(public readonly code: ErrorCode, message: string, public readonly details: ErrorDetail[] = []) {
-    super(message);
-    this.name = 'RuntimeError';
-  }
-}
+const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
+const iso = (ms: number) => new Date(ms).toISOString();
 
-function validated<T>(parsed: { success: true; data: T } | {
-  success: false; error: { issues: { path: PropertyKey[]; message: string }[] };
-}): T {
-  if (parsed.success) return parsed.data;
-  throw new RuntimeError('VALIDATION', 'Input failed validation.', parsed.error.issues.map(({ path, message }) => ({
-    path: path.map((segment) => typeof segment === 'number' ? segment : String(segment)), message,
-  })));
+function assertScope(recordScope: string | undefined, principal: AgentPrincipal, strict: boolean) {
+  if ((!principal.operator || strict) && (recordScope ?? 'local') !== principal.scope) {
+    throw new RuntimeError('NOT_FOUND', 'Resource not found in this agent scope.');
+  }
 }
 
 function invalid(path: (string | number)[], message: string): never {
@@ -70,15 +66,52 @@ function normalizeAnswer(question: Question, value: ResponseValue): ResponseValu
 }
 
 export class ExamRuntime {
-  constructor(private readonly storage: Storage, private readonly clock: () => number = Date.now) {}
+  readonly explanations: ExplanationService;
+
+  constructor(private readonly storage: Storage, private readonly clock: () => number = Date.now) {
+    this.explanations = new ExplanationService(storage, clock);
+  }
 
   close() { this.storage.close(); }
 
-  createExam(input: unknown): ExamSummary {
+  createAgent(id: string) {
+    const scope = validated(agentIdSchema.safeParse(id));
+    if (scope === 'local') invalid(['agent_id'], 'The local agent scope is reserved.');
+    const token = randomBytes(32).toString('base64url');
+    return this.storage.transaction(() => {
+      if (this.storage.getAgentTokenHash(scope)) throw new RuntimeError('CONFLICT', 'This agent scope already exists.');
+      this.storage.insertAgent(scope, hashToken(token), this.clock());
+      return { agent_id: scope, token };
+    });
+  }
+
+  authenticateAgent(id?: string, token?: string): AgentPrincipal {
+    if (id === undefined && token === undefined) return { scope: 'local', operator: true };
+    if (id && token && token.length === 43 && agentIdSchema.safeParse(id).success) {
+      const expected = this.storage.getAgentTokenHash(id);
+      if (expected && timingSafeEqual(Buffer.from(expected, 'hex'), Buffer.from(hashToken(token), 'hex'))) {
+        return { scope: id, operator: false };
+      }
+    }
+    throw new RuntimeError('FORBIDDEN', 'Invalid agent credentials. Set both EXAM_RUNTIME_AGENT_ID and EXAM_RUNTIME_AGENT_TOKEN.');
+  }
+
+  assertExamAccess(id: string, principal: AgentPrincipal) {
+    assertScope(this.getExam(id).agent_scope, principal, false);
+  }
+
+  assertSessionAccess(id: string, principal: AgentPrincipal, strict = false) {
+    assertScope(this.getSessionRecord(id).agent_scope, principal, strict);
+  }
+
+  createExam(input: unknown, agent_scope = 'local'): ExamSummary {
     const definition = validated(examDefinitionSchema.safeParse(input));
     return this.storage.transaction(() => {
       const now = this.clock();
-      const record: ExamRecord = { id: randomUUID(), status: 'draft', definition, created_at: now, updated_at: now };
+      if (agent_scope !== 'local' && !this.storage.getAgentTokenHash(agent_scope)) {
+        throw new RuntimeError('NOT_FOUND', 'Agent scope not found. Create it before assigning an exam.');
+      }
+      const record: ExamRecord = { id: randomUUID(), status: 'draft', definition, agent_scope, created_at: now, updated_at: now };
       this.storage.insertExam(record);
       return summary(record);
     });
@@ -105,7 +138,9 @@ export class ExamRuntime {
     });
   }
 
-  listExams(filter?: ExamFilter) { return this.storage.listExams(filter).map(summary); }
+  listExams(filter?: ExamFilter, agent_scope?: string) {
+    return this.storage.listExams({ ...filter, agent_scope }).map(summary);
+  }
 
   getExam(id: string): ExamRecord {
     const record = this.storage.getExam(id);
@@ -136,6 +171,7 @@ export class ExamRuntime {
         id: randomUUID(), exam_id: examId, snapshot, status: 'in_progress', started_at: now,
         deadline_at: now + snapshot.exam.duration_minutes * 60_000,
         submitted_at: null, submission_reason: null, revision: 0,
+        agent_scope: exam.agent_scope ?? 'local', current_question_id: snapshot.questions[0]!.id, updated_at: now,
       };
       this.storage.insertSession(session);
       return this.sessionView(session, now);
@@ -148,6 +184,63 @@ export class ExamRuntime {
 
   getAnswers(id: string) {
     return this.withSession(id, (session) => this.storage.listResponses(session.id));
+  }
+
+  getState(id: string, principal: AgentPrincipal, includeResponses = false): ExamState {
+    // Read-only: the maintenance sweep finalizes timeouts independently of this projection.
+    return this.storage.readTransaction(() => {
+      const session = this.getSessionRecord(id);
+      assertScope(session.agent_scope, principal, true);
+      const now = this.clock();
+      const end = Math.min(session.submitted_at ?? now, session.deadline_at);
+      const { snapshot } = session;
+      const responses = this.storage.listResponses(id);
+      const flags = this.storage.listFlags(id);
+      const flagged = new Set(flags);
+      const answered = responses.filter((entry) => entry.value !== null).length;
+      const total = snapshot.questions.length;
+      return {
+        session_id: id, exam_id: session.exam_id, title: snapshot.exam.title, subject: snapshot.exam.subject,
+        mode: snapshot.exam.mode, status: session.status, revision: session.revision,
+        updated_at: iso(session.updated_at ?? session.started_at), server_now: iso(now), deadline_at: iso(session.deadline_at),
+        timer: {
+          duration_seconds: Math.floor((session.deadline_at - session.started_at) / 1000),
+          elapsed_seconds: Math.floor(Math.max(0, end - session.started_at) / 1000),
+          remaining_seconds: session.status === 'in_progress' ? Math.ceil(Math.max(0, session.deadline_at - now) / 1000) : 0,
+          is_expired: (session.submitted_at ?? now) >= session.deadline_at,
+        },
+        progress: { total_questions: total, answered, unanswered: total - answered, flagged: flagged.size, current_question_id: this.currentQuestion(session) },
+        flagged_question_ids: flags,
+        ...(includeResponses ? { responses: responses.map((response) => {
+          const question = snapshot.questions.find((entry) => entry.id === response.question_id);
+          const value = response.value;
+          const selected = value === null || question?.type === 'free_text' ? undefined
+            : Array.isArray(value) ? value : [String(value)];
+          return { ...response, is_flagged: flagged.has(response.question_id), ...(selected ? { selected_answers: selected } : {}) };
+        }) } : {}),
+        grading: {
+          status: session.status === 'in_progress' ? 'not_started' : session.status,
+          result_available: session.status === 'graded',
+        },
+      };
+    });
+  }
+
+  setCurrentQuestion(id: string, questionId: string, revision: number): SessionView {
+    return this.changeSession(id, revision, (session) => {
+      this.question(session, questionId);
+      return {
+        changed: this.currentQuestion(session) !== questionId,
+        apply: () => { session.current_question_id = questionId; },
+      };
+    });
+  }
+
+  getChangeVersions(keys: readonly string[]) { return this.storage.getChangeVersions(keys); }
+
+  maintain() {
+    this.finalizeExpired();
+    this.explanations.recoverExpiredClaims();
   }
 
   recordAnswer(id: string, questionId: string, input: unknown, revision: number): SessionView {
@@ -204,8 +297,7 @@ export class ExamRuntime {
       this.storage.putGrades(id, grades);
       this.storage.insertResult(id, result, now);
       session.status = 'graded';
-      session.revision++;
-      this.storage.updateSession(session);
+      this.persistStateChange(session, now);
       return this.resultView(session, true);
     });
     if (!resultView) throw new RuntimeError('CONFLICT', 'This attempt is not pending agent grading.');
@@ -225,6 +317,17 @@ export class ExamRuntime {
     const session = this.storage.getSession(id);
     if (!session) throw new RuntimeError('NOT_FOUND', 'Session not found.');
     return session;
+  }
+
+  private currentQuestion(session: SessionRecord) {
+    return session.current_question_id ?? session.snapshot.questions[0]!.id;
+  }
+
+  private persistStateChange(session: SessionRecord, now: number) {
+    session.revision++;
+    session.updated_at = Math.max(session.updated_at ?? session.started_at, now);
+    this.storage.updateSession(session);
+    this.storage.bumpChange(`state:${session.id}`);
   }
 
   private question(session: SessionRecord, questionId: string) {
@@ -252,8 +355,7 @@ export class ExamRuntime {
       if (mutation.changed) {
         if (session.revision !== revision) return { error: 'The session has changed. Refresh before trying again.' } as const;
         mutation.apply(now);
-        session.revision++;
-        this.storage.updateSession(session);
+        this.persistStateChange(session, now);
       }
       return { session: this.sessionView(session, now) } as const;
     });
@@ -271,7 +373,6 @@ export class ExamRuntime {
   private finalize(session: SessionRecord, reason: SubmissionReason, now: number) {
     session.submission_reason = reason;
     session.submitted_at = reason === 'timeout' ? session.deadline_at : now;
-    session.revision++;
     if (session.snapshot.grading.mode === 'answer_key') {
       const result = computeResult(session.snapshot, this.storage.listResponses(session.id));
       this.storage.insertResult(session.id, result, now);
@@ -279,7 +380,7 @@ export class ExamRuntime {
     } else {
       session.status = 'pending_grading';
     }
-    this.storage.updateSession(session);
+    this.persistStateChange(session, now);
   }
 
   private sessionView(session: SessionRecord, now: number): SessionView {
@@ -292,7 +393,8 @@ export class ExamRuntime {
       id: session.id, exam_id: session.exam_id, title: snapshot.exam.title, subject: snapshot.exam.subject,
       status: session.status, started_at: session.started_at, deadline_at: session.deadline_at,
       submitted_at: session.submitted_at, submission_reason: session.submission_reason,
-      revision: session.revision, server_now: now,
+      revision: session.revision, updated_at: session.updated_at ?? session.started_at, server_now: now,
+      current_question_id: this.currentQuestion(session),
       expired: (session.submitted_at ?? now) >= session.deadline_at,
       allow_review: snapshot.exam.allow_review, auto_submit_on_timeout: snapshot.exam.auto_submit_on_timeout,
       grading_mode: snapshot.grading.mode, questions: snapshot.questions.map(candidateQuestion),

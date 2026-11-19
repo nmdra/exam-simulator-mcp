@@ -1,4 +1,4 @@
-import { RuntimeError } from './index.js';
+import { RuntimeError } from './errors.js';
 
 export const loopbackHost = '127.0.0.1';
 

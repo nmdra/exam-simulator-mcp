@@ -8,6 +8,8 @@ const metadata = z.record(z.string(), z.json()).optional();
 
 export const entityIdSchema = z.uuid();
 export const itemIdSchema = z.string().min(1).max(80).regex(/^[a-zA-Z0-9_-]+$/);
+export const agentIdSchema = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9_-]*$/);
+export const examModeSchema = z.enum(['exam', 'practice', 'learning']);
 export const examStatusSchema = z.enum(['draft', 'published']);
 export const sessionStatusSchema = z.enum(['in_progress', 'pending_grading', 'graded']);
 export const submissionReasonSchema = z.enum(['manual', 'timeout']);
@@ -17,6 +19,29 @@ export const revisionSchema = z.number().int().nonnegative();
 export type ExamStatus = z.infer<typeof examStatusSchema>;
 export type SessionStatus = z.infer<typeof sessionStatusSchema>;
 export type SubmissionReason = z.infer<typeof submissionReasonSchema>;
+
+export const explanationTypeSchema = z.enum(['hint', 'detailed', 'why_wrong']);
+export const explanationStatusSchema = z.enum(['pending', 'processing', 'completed', 'failed', 'cancelled']);
+export const explanationContentSchema = z.strictObject({
+  summary: z.string().trim().min(1).max(500),
+  explanation: z.string().trim().min(1).max(12_000),
+  learning_tip: z.string().trim().min(1).max(2_000).optional(),
+  agent_metadata: metadata.refine((value) => value === undefined || JSON.stringify(value).length <= 2_000, 'Agent metadata exceeds 2,000 characters.'),
+});
+export const claimTokenSchema = z.string().regex(/^[A-Za-z0-9_-]{32,128}$/);
+const requestPolicy = z.enum(['disabled', 'after_submission', 'on_request']);
+const assistanceSchema = z.strictObject({
+  enabled: z.boolean().default(false),
+  exam_mode: z.enum(['disabled', 'after_submission']).default('after_submission'),
+  practice_mode: requestPolicy.default('on_request'),
+  learning_mode: requestPolicy.default('on_request'),
+  allowed_types: z.array(explanationTypeSchema).min(1).max(3)
+    .refine((types) => new Set(types).size === types.length, 'Explanation types must be unique.')
+    .default(['hint', 'detailed', 'why_wrong']),
+});
+export type ExplanationType = z.infer<typeof explanationTypeSchema>;
+export type ExplanationStatus = z.infer<typeof explanationStatusSchema>;
+export type ExplanationContent = z.infer<typeof explanationContentSchema>;
 
 const optionSchema = z.strictObject({ id: itemIdSchema, text: z.string().trim().min(1).max(4_000) });
 const levelsSchema = z.array(z.strictObject({ name: label, min_percent: percent })).max(100);
@@ -50,7 +75,7 @@ const examSchema = z.strictObject({
   instructions: z.string().max(8_000).default(''),
   subject: label.default('General'),
   difficulty: label.optional(),
-  mode: z.literal('exam').default('exam'),
+  mode: examModeSchema.default('exam'),
   duration_minutes: z.number().int().min(1).max(1_440).default(60),
   shuffle_questions: z.boolean().default(false),
   allow_review: z.boolean().default(true),
@@ -67,6 +92,7 @@ export const examDefinitionSchema = z.strictObject({
   schema_version: z.literal('1.0'),
   exam: examSchema,
   grading: gradingSchema.prefault({}),
+  assistance: assistanceSchema.optional(),
   questions: z.array(questionSchema).min(1).max(500),
 }).superRefine((doc, ctx) => {
   const issue = (path: (string | number)[], message: string) => ctx.addIssue({ code: 'custom', path, message });

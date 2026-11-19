@@ -567,7 +567,7 @@ it('restores durable attempts across close, a separate Node process, and reopen'
     expect(reopened.getExam(saved.active.exam_id).definition.questions.map(({ id }) => id)).toEqual(questionOrder);
     const restored = reopened.getSession(saved.active.id);
     expect(restored).toEqual({
-      ...saved.beforeChild, server_now: now, revision: 3,
+      ...saved.beforeChild, server_now: now, updated_at: now, revision: 3,
       responses: [{ question_id: 'single', value: 'a', updated_at: now }, ...saved.beforeChild.responses],
       progress: { total: 4, answered: 2, unanswered: 2, flagged: 1 },
     });

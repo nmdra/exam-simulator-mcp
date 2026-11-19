@@ -1,4 +1,4 @@
-import { closeSync, fchmodSync, mkdirSync, openSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import type {
@@ -15,6 +15,7 @@ export interface ExamRecord {
   id: string;
   status: ExamStatus;
   definition: ExamDefinition;
+  agent_scope?: string;
   created_at: number;
   updated_at: number;
 }
@@ -29,6 +30,38 @@ export interface SessionRecord {
   submitted_at: number | null;
   submission_reason: SubmissionReason | null;
   revision: number;
+  agent_scope?: string;
+  current_question_id?: string | null;
+  updated_at?: number;
+}
+
+export interface ExplanationRequestRecord {
+  id: string;
+  session_id: string;
+  question_id: string;
+  agent_scope: string;
+  type: 'hint' | 'detailed' | 'why_wrong';
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  attempt_count: number;
+  claim_owner: string | null;
+  claim_hash: string | null;
+  claim_expires_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ExplanationRecord {
+  id: string;
+  request_id: string;
+  session_id: string;
+  question_id: string;
+  content: {
+    summary: string;
+    explanation: string;
+    learning_tip?: string;
+    agent_metadata?: Record<string, unknown>;
+  };
+  completed_at: number;
 }
 
 export interface StoredResponse {
@@ -43,22 +76,22 @@ export interface StoredGrade {
   feedback?: string;
 }
 
-type ExamFilter = { status?: ExamStatus; subject?: string };
+type ExamFilter = { status?: ExamStatus; subject?: string; agent_scope?: string };
 type ExamDefinitionFields = Omit<ExamDefinition, 'questions'>;
-type ExamRow = Omit<ExamRecord, 'definition'> & { definition_json: string; questions_json: string };
-type ExamWrite = Omit<ExamRow, 'questions_json'> & { subject: string };
-type SessionRow = Omit<SessionRecord, 'snapshot'> & { snapshot_json: string };
-type SessionWrite = SessionRow & { auto_submit_on_timeout: number };
+export type StoredExamRecord = Required<ExamRecord>;
+export type StoredSessionRecord = Required<SessionRecord>;
+type ExamRow = Omit<StoredExamRecord, 'definition'> & { definition_json: string; questions_json: string };
+type ExamWrite = Omit<ExamRow, 'questions_json' | 'agent_scope'> & { subject: string; agent_scope: string | null };
+type SessionRow = Omit<StoredSessionRecord, 'snapshot'> & { snapshot_json: string };
+type SessionWrite = Omit<SessionRow, 'agent_scope' | 'updated_at'> & {
+  auto_submit_on_timeout: number;
+  agent_scope: string | null;
+  updated_at: number | null;
+  has_current_question_id: number;
+};
 type ResponseRow = Omit<StoredResponse, 'value'> & { value_json: string };
 type GradeRow = Omit<StoredGrade, 'feedback'> & { feedback: string | null };
-
-const examPredicates = {
-  all: '',
-  byId: 'WHERE e.id = ?',
-  byStatus: 'WHERE e.status = ?',
-  bySubject: 'WHERE e.subject = ?',
-  byStatusAndSubject: 'WHERE e.status = ? AND e.subject = ?',
-} as const;
+type ExplanationRow = Omit<ExplanationRecord, 'content'> & { content_json: string };
 
 function defaultDataHome(): string {
   const xdg = process.env.XDG_DATA_HOME;
@@ -84,13 +117,9 @@ function openDatabase(filename: string): Database.Database {
   if (path !== ':memory:' && path !== '') {
     path = resolve(path);
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    // Start with private permissions before SQLite creates the WAL sidecars.
-    const fd = openSync(path, 'a', 0o600);
-    try {
-      if (process.platform !== 'win32') fchmodSync(fd, 0o600);
-    } finally {
-      closeSync(fd);
-    }
+    // Create new files with private permissions before SQLite creates the WAL sidecars.
+    // The creation mode does not change the permissions of an existing database.
+    closeSync(openSync(path, 'a', 0o600));
   }
   const db = new Database(path, { timeout: 5_000 });
   try {
@@ -120,15 +149,26 @@ function decodeJson<T>(json: string): T {
 
 function examWrite(record: ExamRecord, definition: ExamDefinitionFields): ExamWrite {
   const { id, status, created_at, updated_at } = record;
-  return { id, status, created_at, updated_at, subject: definition.exam.subject, definition_json: encodeJson(definition) };
+  return {
+    id, status, created_at, updated_at, agent_scope: record.agent_scope ?? null,
+    subject: definition.exam.subject, definition_json: encodeJson(definition),
+  };
 }
 
-function sessionWrite({ snapshot, ...row }: SessionRecord): SessionWrite {
+function sessionWrite({ snapshot, agent_scope, current_question_id, updated_at, ...row }: SessionRecord): SessionWrite {
   return {
     ...row,
+    agent_scope: agent_scope ?? null,
+    current_question_id: current_question_id ?? null,
+    has_current_question_id: current_question_id === undefined ? 0 : 1,
+    updated_at: updated_at ?? null,
     snapshot_json: encodeJson(snapshot),
     auto_submit_on_timeout: snapshot.exam.auto_submit_on_timeout ? 1 : 0,
   };
+}
+
+function decodeExplanation({ content_json, ...row }: ExplanationRow): ExplanationRecord {
+  return { ...row, content: decodeJson<ExplanationRecord['content']>(content_json) };
 }
 
 export class Storage {
@@ -146,12 +186,43 @@ export class Storage {
     return this.#db.transaction(fn).immediate();
   }
 
+  readTransaction<T>(fn: () => T): T {
+    return this.#db.transaction(fn).deferred();
+  }
+
+  insertAgent(id: string, tokenHash: string, now: number): void {
+    this.#db.prepare<[string, string, number]>(`
+      INSERT INTO agent_credentials (id, token_hash, created_at) VALUES (?, ?, ?)
+    `).run(id, tokenHash, now);
+  }
+
+  getAgentTokenHash(id: string): string | undefined {
+    return this.#db.prepare<[string], { token_hash: string }>(`
+      SELECT token_hash FROM agent_credentials WHERE id = ?
+    `).get(id)?.token_hash;
+  }
+
+  bumpChange(key: string): void {
+    this.#db.prepare<[string]>(`
+      INSERT INTO change_versions (key, version) VALUES (?, 1)
+      ON CONFLICT (key) DO UPDATE SET version = version + 1
+    `).run(key);
+  }
+
+  getChangeVersions(keys: readonly string[]): Map<string, number> {
+    if (keys.length === 0) return new Map();
+    const rows = this.#db.prepare<[string], { key: string; version: number }>(`
+      SELECT key, version FROM change_versions WHERE key IN (SELECT value FROM json_each(?))
+    `).all(encodeJson(keys));
+    return new Map(rows.map(({ key, version }) => [key, version]));
+  }
+
   insertExam(record: ExamRecord): void {
     this.transaction(() => {
       const { questions, ...definition } = record.definition;
       this.#db.prepare<ExamWrite>(`
-        INSERT INTO exams (id, status, subject, definition_json, created_at, updated_at)
-        VALUES (@id, @status, @subject, @definition_json, @created_at, @updated_at)
+        INSERT INTO exams (id, status, subject, definition_json, created_at, updated_at, agent_scope)
+        VALUES (@id, @status, @subject, @definition_json, @created_at, @updated_at, coalesce(@agent_scope, 'local'))
       `).run(examWrite(record, definition));
       this.#insertExamQuestions(record.id, questions);
     });
@@ -162,7 +233,7 @@ export class Storage {
       const { questions, ...definition } = record.definition;
       const { changes } = this.#db.prepare<ExamWrite>(`
         UPDATE exams SET status = @status, subject = @subject, definition_json = @definition_json,
-          created_at = @created_at, updated_at = @updated_at
+          created_at = @created_at, updated_at = @updated_at, agent_scope = coalesce(@agent_scope, agent_scope)
         WHERE id = @id
       `).run(examWrite(record, definition));
       if (changes === 0) return;
@@ -180,25 +251,36 @@ export class Storage {
     }
   }
 
-  getExam(id: string): ExamRecord | undefined {
-    return this.#readExams('byId', id)[0];
+  getExam(id: string): StoredExamRecord | undefined {
+    return this.#readExams('WHERE e.id = ?', [id])[0];
   }
 
-  listExams({ status, subject }: ExamFilter = {}): ExamRecord[] {
-    if (status !== undefined && subject !== undefined) return this.#readExams('byStatusAndSubject', status, subject);
-    if (status !== undefined) return this.#readExams('byStatus', status);
-    if (subject !== undefined) return this.#readExams('bySubject', subject);
-    return this.#readExams('all');
+  listExams({ status, subject, agent_scope }: ExamFilter = {}): StoredExamRecord[] {
+    const predicates: string[] = [];
+    const values: string[] = [];
+    if (agent_scope !== undefined) {
+      predicates.push('e.agent_scope = ?');
+      values.push(agent_scope);
+    }
+    if (status !== undefined) {
+      predicates.push('e.status = ?');
+      values.push(status);
+    }
+    if (subject !== undefined) {
+      predicates.push('e.subject = ?');
+      values.push(subject);
+    }
+    return this.#readExams(predicates.length ? `WHERE ${predicates.join(' AND ')}` : '', values);
   }
 
-  #readExams(predicate: keyof typeof examPredicates, ...values: string[]): ExamRecord[] {
+  #readExams(where: string, values: string[]): StoredExamRecord[] {
     // One statement reads both the exam fields and the ordered questions from the same snapshot.
     const sql = `
-      SELECT e.id, e.status, e.definition_json, e.created_at, e.updated_at,
+      SELECT e.id, e.status, e.definition_json, e.created_at, e.updated_at, e.agent_scope,
         (SELECT json_group_array(json(q.question_json) ORDER BY q.position)
            FROM exam_questions AS q WHERE q.exam_id = e.id) AS questions_json
       FROM exams AS e
-      ${examPredicates[predicate]}
+      ${where}
       ORDER BY e.created_at DESC, e.id
     `;
     return this.#db.prepare<string[], ExamRow>(sql).all(...values).map(({ definition_json, questions_json, ...row }) => ({
@@ -213,9 +295,11 @@ export class Storage {
   insertSession(record: SessionRecord): void {
     this.#db.prepare<SessionWrite>(`
       INSERT INTO exam_sessions (id, exam_id, status, snapshot_json, auto_submit_on_timeout,
-        started_at, deadline_at, submitted_at, submission_reason, revision)
+        started_at, deadline_at, submitted_at, submission_reason, revision, agent_scope, current_question_id, updated_at)
       VALUES (@id, @exam_id, @status, @snapshot_json, @auto_submit_on_timeout,
-        @started_at, @deadline_at, @submitted_at, @submission_reason, @revision)
+        @started_at, @deadline_at, @submitted_at, @submission_reason, @revision,
+        coalesce(@agent_scope, 'local'), @current_question_id,
+        coalesce(@updated_at, max(@started_at, coalesce(@submitted_at, @started_at))))
     `).run(sessionWrite(record));
   }
 
@@ -224,15 +308,17 @@ export class Storage {
       UPDATE exam_sessions SET exam_id = @exam_id, status = @status, snapshot_json = @snapshot_json,
         auto_submit_on_timeout = @auto_submit_on_timeout, started_at = @started_at,
         deadline_at = @deadline_at, submitted_at = @submitted_at, submission_reason = @submission_reason,
-        revision = @revision
+        revision = @revision, agent_scope = coalesce(@agent_scope, agent_scope),
+        current_question_id = CASE WHEN @has_current_question_id THEN @current_question_id ELSE current_question_id END,
+        updated_at = coalesce(@updated_at, max(updated_at, @started_at, coalesce(@submitted_at, @started_at)))
       WHERE id = @id
     `).run(sessionWrite(record));
   }
 
-  getSession(id: string): SessionRecord | undefined {
+  getSession(id: string): StoredSessionRecord | undefined {
     const result = this.#db.prepare<[string], SessionRow>(`
       SELECT id, exam_id, status, snapshot_json, started_at, deadline_at, submitted_at,
-        submission_reason, revision
+        submission_reason, revision, agent_scope, current_question_id, updated_at
       FROM exam_sessions WHERE id = ?
     `).get(id);
     if (!result) return undefined;
@@ -246,6 +332,94 @@ export class Storage {
       WHERE status = 'in_progress' AND auto_submit_on_timeout = 1 AND deadline_at <= ?
       ORDER BY deadline_at, id LIMIT ?
     `).all(now, limit).map(({ id }) => id);
+  }
+
+  insertExplanationRequest(record: ExplanationRequestRecord): void {
+    this.#db.prepare<ExplanationRequestRecord>(`
+      INSERT INTO explanation_requests (id, session_id, question_id, agent_scope, type, status,
+        attempt_count, claim_owner, claim_hash, claim_expires_at, created_at, updated_at)
+      VALUES (@id, @session_id, @question_id, @agent_scope, @type, @status,
+        @attempt_count, @claim_owner, @claim_hash, @claim_expires_at, @created_at, @updated_at)
+    `).run(record);
+  }
+
+  updateExplanationRequest(record: ExplanationRequestRecord): void {
+    this.#db.prepare<ExplanationRequestRecord>(`
+      UPDATE explanation_requests SET status = @status, attempt_count = @attempt_count,
+        claim_owner = @claim_owner, claim_hash = @claim_hash, claim_expires_at = @claim_expires_at,
+        updated_at = @updated_at
+      WHERE id = @id
+    `).run(record);
+  }
+
+  getExplanationRequest(id: string): ExplanationRequestRecord | undefined {
+    return this.#db.prepare<[string], ExplanationRequestRecord>(`
+      SELECT * FROM explanation_requests WHERE id = ?
+    `).get(id);
+  }
+
+  findEquivalentExplanation(
+    sessionId: string, questionId: string, type: ExplanationRequestRecord['type'],
+  ): ExplanationRequestRecord | undefined {
+    return this.#db.prepare<[string, string, ExplanationRequestRecord['type']], ExplanationRequestRecord>(`
+      SELECT * FROM explanation_requests WHERE session_id = ? AND question_id = ? AND type = ?
+        AND status IN ('pending', 'processing', 'completed')
+    `).get(sessionId, questionId, type);
+  }
+
+  listScopeExplanationRequests(
+    scope: string, status: ExplanationRequestRecord['status'] | undefined, limit: number,
+  ): ExplanationRequestRecord[] {
+    if (status === undefined) {
+      return this.#db.prepare<[string, number], ExplanationRequestRecord>(`
+        SELECT * FROM explanation_requests WHERE agent_scope = ? ORDER BY created_at, id LIMIT ?
+      `).all(scope, limit);
+    }
+    return this.#db.prepare<[string, ExplanationRequestRecord['status'], number], ExplanationRequestRecord>(`
+      SELECT * FROM explanation_requests WHERE agent_scope = ? AND status = ? ORDER BY created_at, id LIMIT ?
+    `).all(scope, status, limit);
+  }
+
+  countPendingExplanations(scope: string): number {
+    const row = this.#db.prepare<[string], { count: number }>(`
+      SELECT count(*) AS count FROM explanation_requests WHERE agent_scope = ? AND status = 'pending'
+    `).get(scope);
+    return row?.count ?? 0;
+  }
+
+  listSessionExplanationRequests(sessionId: string): ExplanationRequestRecord[] {
+    return this.#db.prepare<[string], ExplanationRequestRecord>(`
+      SELECT * FROM explanation_requests WHERE session_id = ? ORDER BY created_at DESC, id
+    `).all(sessionId);
+  }
+
+  listExpiredExplanationClaims(now: number, limit: number): ExplanationRequestRecord[] {
+    return this.#db.prepare<[number, number], ExplanationRequestRecord>(`
+      SELECT * FROM explanation_requests WHERE status = 'processing' AND claim_expires_at <= ?
+      ORDER BY claim_expires_at, id LIMIT ?
+    `).all(now, limit);
+  }
+
+  getExplanation(requestId: string): ExplanationRecord | undefined {
+    const row = this.#db.prepare<[string], ExplanationRow>(`
+      SELECT id, request_id, session_id, question_id, content_json, completed_at
+      FROM explanations WHERE request_id = ?
+    `).get(requestId);
+    return row === undefined ? undefined : decodeExplanation(row);
+  }
+
+  listSessionExplanations(sessionId: string): ExplanationRecord[] {
+    return this.#db.prepare<[string], ExplanationRow>(`
+      SELECT id, request_id, session_id, question_id, content_json, completed_at
+      FROM explanations WHERE session_id = ? ORDER BY completed_at DESC, id
+    `).all(sessionId).map(decodeExplanation);
+  }
+
+  insertExplanation({ content, ...row }: ExplanationRecord): void {
+    this.#db.prepare<ExplanationRow>(`
+      INSERT INTO explanations (id, request_id, session_id, question_id, content_json, completed_at)
+      VALUES (@id, @request_id, @session_id, @question_id, @content_json, @completed_at)
+    `).run({ ...row, content_json: encodeJson(content) });
   }
 
   listResponses(sessionId: string): StoredResponse[] {
