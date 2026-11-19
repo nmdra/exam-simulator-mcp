@@ -5,7 +5,8 @@
     "incremental": true
   },
   "include": [
-    "./**/*.ts"
+    "./**/*.ts",
+    "../examples/**/*.ts"
   ],
   "references": [
     {

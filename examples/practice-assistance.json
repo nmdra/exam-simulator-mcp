@@ -1,0 +1,32 @@
+{
+  "schema_version": "1.0",
+  "exam": {
+    "title": "Backup and Recovery Practice",
+    "subject": "Systems",
+    "mode": "practice",
+    "duration_minutes": 10,
+    "instructions": "Work through both questions. You can request a hint or explanation before submitting."
+  },
+  "assistance": { "enabled": true },
+  "questions": [
+    {
+      "id": "q1",
+      "type": "single_select",
+      "domain": "Recovery",
+      "text": "What best verifies that a backup can recover an application?",
+      "options": [
+        { "id": "A", "text": "Restore it to an isolated environment and test the application." },
+        { "id": "B", "text": "Check that the backup file exists." },
+        { "id": "C", "text": "Confirm that the scheduler has a job for the application." }
+      ],
+      "correct_answers": ["A"]
+    },
+    {
+      "id": "q2",
+      "type": "true_false",
+      "domain": "Recovery",
+      "text": "A tested restore procedure can reduce uncertainty during an outage.",
+      "correct_answers": ["true"]
+    }
+  ]
+}
