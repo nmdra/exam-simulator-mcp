@@ -33,6 +33,7 @@ export interface SessionRecord {
   agent_scope?: string;
   current_question_id?: string | null;
   updated_at?: number;
+  timeout_observed?: 0 | 1;
 }
 
 export interface ExplanationRequestRecord {
@@ -83,7 +84,8 @@ export type StoredSessionRecord = Required<SessionRecord>;
 type ExamRow = Omit<StoredExamRecord, 'definition'> & { definition_json: string; questions_json: string };
 type ExamWrite = Omit<ExamRow, 'questions_json' | 'agent_scope'> & { subject: string; agent_scope: string | null };
 type SessionRow = Omit<StoredSessionRecord, 'snapshot'> & { snapshot_json: string };
-type SessionWrite = Omit<SessionRow, 'agent_scope' | 'updated_at'> & {
+type SessionWrite = Omit<SessionRow, 'agent_scope' | 'updated_at' | 'timeout_observed'> & {
+  timeout_observed: 0 | 1 | null;
   auto_submit_on_timeout: number;
   agent_scope: string | null;
   updated_at: number | null;
@@ -155,13 +157,14 @@ function examWrite(record: ExamRecord, definition: ExamDefinitionFields): ExamWr
   };
 }
 
-function sessionWrite({ snapshot, agent_scope, current_question_id, updated_at, ...row }: SessionRecord): SessionWrite {
+function sessionWrite({ snapshot, agent_scope, current_question_id, updated_at, timeout_observed, ...row }: SessionRecord): SessionWrite {
   return {
     ...row,
     agent_scope: agent_scope ?? null,
     current_question_id: current_question_id ?? null,
     has_current_question_id: current_question_id === undefined ? 0 : 1,
     updated_at: updated_at ?? null,
+    timeout_observed: timeout_observed ?? null,
     snapshot_json: encodeJson(snapshot),
     auto_submit_on_timeout: snapshot.exam.auto_submit_on_timeout ? 1 : 0,
   };
@@ -295,11 +298,11 @@ export class Storage {
   insertSession(record: SessionRecord): void {
     this.#db.prepare<SessionWrite>(`
       INSERT INTO exam_sessions (id, exam_id, status, snapshot_json, auto_submit_on_timeout,
-        started_at, deadline_at, submitted_at, submission_reason, revision, agent_scope, current_question_id, updated_at)
+        started_at, deadline_at, submitted_at, submission_reason, revision, agent_scope, current_question_id, updated_at, timeout_observed)
       VALUES (@id, @exam_id, @status, @snapshot_json, @auto_submit_on_timeout,
         @started_at, @deadline_at, @submitted_at, @submission_reason, @revision,
         coalesce(@agent_scope, 'local'), @current_question_id,
-        coalesce(@updated_at, max(@started_at, coalesce(@submitted_at, @started_at))))
+        coalesce(@updated_at, max(@started_at, coalesce(@submitted_at, @started_at))), coalesce(@timeout_observed, 0))
     `).run(sessionWrite(record));
   }
 
@@ -310,7 +313,8 @@ export class Storage {
         deadline_at = @deadline_at, submitted_at = @submitted_at, submission_reason = @submission_reason,
         revision = @revision, agent_scope = coalesce(@agent_scope, agent_scope),
         current_question_id = CASE WHEN @has_current_question_id THEN @current_question_id ELSE current_question_id END,
-        updated_at = coalesce(@updated_at, max(updated_at, @started_at, coalesce(@submitted_at, @started_at)))
+        updated_at = coalesce(@updated_at, max(updated_at, @started_at, coalesce(@submitted_at, @started_at))),
+        timeout_observed = coalesce(@timeout_observed, timeout_observed)
       WHERE id = @id
     `).run(sessionWrite(record));
   }
@@ -318,7 +322,7 @@ export class Storage {
   getSession(id: string): StoredSessionRecord | undefined {
     const result = this.#db.prepare<[string], SessionRow>(`
       SELECT id, exam_id, status, snapshot_json, started_at, deadline_at, submitted_at,
-        submission_reason, revision, agent_scope, current_question_id, updated_at
+        submission_reason, revision, agent_scope, current_question_id, updated_at, timeout_observed
       FROM exam_sessions WHERE id = ?
     `).get(id);
     if (!result) return undefined;
@@ -330,6 +334,14 @@ export class Storage {
     return this.#db.prepare<[number, number], { id: string }>(`
       SELECT id FROM exam_sessions
       WHERE status = 'in_progress' AND auto_submit_on_timeout = 1 AND deadline_at <= ?
+      ORDER BY deadline_at, id LIMIT ?
+    `).all(now, limit).map(({ id }) => id);
+  }
+
+  listUnobservedManualTimeoutIds(now: number, limit: number): string[] {
+    return this.#db.prepare<[number, number], { id: string }>(`
+      SELECT id FROM exam_sessions
+      WHERE status = 'in_progress' AND auto_submit_on_timeout = 0 AND timeout_observed = 0 AND deadline_at <= ?
       ORDER BY deadline_at, id LIMIT ?
     `).all(now, limit).map(({ id }) => id);
   }

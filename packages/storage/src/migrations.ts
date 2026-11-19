@@ -132,6 +132,11 @@ const migrations = [
     ) STRICT;
     CREATE INDEX explanations_by_session ON explanations (session_id, completed_at DESC, id);
   `,
+  `
+    ALTER TABLE exam_sessions ADD COLUMN timeout_observed INTEGER NOT NULL DEFAULT 0 CHECK (timeout_observed IN (0, 1));
+    CREATE INDEX exam_sessions_manual_timeout_due ON exam_sessions (deadline_at, id)
+      WHERE status = 'in_progress' AND auto_submit_on_timeout = 0 AND timeout_observed = 0;
+  `,
 ];
 
 export function migrate(db: Database.Database): void {

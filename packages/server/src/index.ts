@@ -4,16 +4,21 @@ import { fileURLToPath } from 'node:url';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { z } from 'zod';
-import { loopbackHost, runtimePort, RuntimeError, uiBaseUrl } from '@exam-runtime/core';
+import { createRevisionWatcher, loopbackHost, runtimePort, RuntimeError, uiBaseUrl } from '@exam-runtime/core';
 import type { ExamRuntime } from '@exam-runtime/core';
-import { entityIdSchema, examFilterSchema, itemIdSchema, responseSchema, revisionSchema } from '@exam-runtime/schemas';
+import { entityIdSchema, examFilterSchema, explanationTypeSchema, itemIdSchema, responseSchema, revisionSchema } from '@exam-runtime/schemas';
 
 const examParams = z.strictObject({ examId: entityIdSchema });
 const sessionParams = z.strictObject({ sessionId: entityIdSchema });
 const questionParams = sessionParams.extend({ questionId: itemIdSchema });
+const explanationParams = sessionParams.extend({ requestId: entityIdSchema });
 const answerBody = z.strictObject({ value: responseSchema, revision: revisionSchema });
 const flagBody = z.strictObject({ flagged: z.boolean(), revision: revisionSchema });
+const currentQuestionBody = z.strictObject({ question_id: itemIdSchema, revision: revisionSchema });
+const explanationBody = z.strictObject({ question_id: itemIdSchema, type: explanationTypeSchema });
 const emptyBody = z.strictObject({});
+const explanationEvent = 'event: explanations\ndata: {}\n\n';
+const maxExplanationStreams = 64;
 const publishedFilter = examFilterSchema.pick({ subject: true });
 const root = fileURLToPath(new URL('../../../apps/web/dist/', import.meta.url));
 
@@ -35,6 +40,8 @@ export function buildServer(runtime: ExamRuntime, options: { port?: number; webR
   const webRoot = options.webRoot === false ? false : resolve(options.webRoot ?? root);
   const uiAvailable = webRoot !== false && existsSync(resolve(webRoot, 'index.html'));
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 1_048_576 });
+  const watcher = createRevisionWatcher(runtime, () => app.log.error('Failed to watch explanation revisions'));
+  const streams = new Set<() => void>();
 
   app.addHook('onRequest', async (request, reply) => {
     reply.header('X-Content-Type-Options', 'nosniff');
@@ -62,7 +69,7 @@ export function buildServer(runtime: ExamRuntime, options: { port?: number; webR
 
   app.setErrorHandler((err, request, reply) => {
     if (err instanceof RuntimeError) {
-      const status = { VALIDATION: 400, NOT_FOUND: 404, CONFLICT: 409, UI_UNAVAILABLE: 503 }[err.code];
+      const status = { VALIDATION: 400, FORBIDDEN: 403, NOT_FOUND: 404, CONFLICT: 409, UI_UNAVAILABLE: 503 }[err.code];
       return reply.code(status).send(error(err.code, err.message, err.details));
     }
     const status = typeof err === 'object' && err !== null && 'statusCode' in err ? err.statusCode : undefined;
@@ -97,6 +104,68 @@ export function buildServer(runtime: ExamRuntime, options: { port?: number; webR
     const { flagged, revision } = parse(flagBody, request.body, 'body');
     return data(runtime.setFlag(sessionId, questionId, flagged, revision));
   });
+  app.put('/api/sessions/:sessionId/current-question', (request) => {
+    const { sessionId } = parse(sessionParams, request.params, 'params');
+    const { question_id, revision } = parse(currentQuestionBody, request.body, 'body');
+    return data(runtime.setCurrentQuestion(sessionId, question_id, revision));
+  });
+  app.post('/api/sessions/:sessionId/explanations', (request, reply) => {
+    const { sessionId } = parse(sessionParams, request.params, 'params');
+    const { question_id, type } = parse(explanationBody, request.body, 'body');
+    return reply.code(202).send(data(runtime.explanations.request(sessionId, question_id, type)));
+  });
+  app.get('/api/sessions/:sessionId/explanations', (request) => {
+    const { sessionId } = parse(sessionParams, request.params, 'params');
+    return data(runtime.explanations.forSession(sessionId));
+  });
+  app.post('/api/sessions/:sessionId/explanations/:requestId/cancel', (request) => {
+    const { sessionId, requestId } = parse(explanationParams, request.params, 'params');
+    parse(emptyBody, request.body, 'body');
+    return data(runtime.explanations.cancel(sessionId, requestId));
+  });
+  app.get('/api/sessions/:sessionId/explanations/events', { exposeHeadRoute: false }, (request, reply) => {
+    const { sessionId } = parse(sessionParams, request.params, 'params');
+    if (streams.size >= maxExplanationStreams) {
+      return reply.code(503).send(error('SERVICE_UNAVAILABLE', 'Too many explanation event streams are open.'));
+    }
+    runtime.getSession(sessionId);
+
+    const { raw } = reply;
+    let heartbeat: NodeJS.Timeout | undefined;
+    const cleanup = () => {
+      if (!streams.delete(close)) return;
+      unsubscribe();
+      clearInterval(heartbeat);
+    };
+    const close = () => {
+      cleanup();
+      raw.destroy();
+    };
+    const write = (chunk: string) => {
+      // The client can reconnect and fetch the snapshot. Do not queue events for a slow client.
+      if (raw.destroyed || !raw.write(chunk)) close();
+    };
+    const unsubscribe = watcher.watch(`explanations:${sessionId}`, () => write(explanationEvent));
+    streams.add(close);
+    raw.once('close', cleanup);
+    raw.once('error', close);
+
+    reply.hijack();
+    try {
+      reply.header('Content-Type', 'text/event-stream; charset=utf-8');
+      reply.header('X-Accel-Buffering', 'no');
+      for (const [name, value] of Object.entries(reply.getHeaders())) {
+        if (value !== undefined) raw.setHeader(name, value);
+      }
+      raw.writeHead(200);
+      heartbeat = setInterval(() => write(': heartbeat\n\n'), 15_000).unref();
+      write(explanationEvent);
+    } catch {
+      close();
+      request.log.error('Failed to open explanation event stream');
+    }
+    return reply;
+  });
   app.post('/api/sessions/:sessionId/submit', (request) => {
     const { sessionId } = parse(sessionParams, request.params, 'params');
     parse(emptyBody, request.body, 'body');
@@ -115,15 +184,19 @@ export function buildServer(runtime: ExamRuntime, options: { port?: number; webR
 
   let sweep: NodeJS.Timeout | undefined;
   app.addHook('onListen', async () => {
-    const expire = () => {
-      try { runtime.finalizeExpired(); }
-      catch (err) { app.log.error({ err }, 'Failed to check exam deadlines'); }
+    const maintain = () => {
+      try { runtime.maintain(); }
+      catch (err) { app.log.error({ err }, 'Failed to maintain exam sessions and explanation requests'); }
     };
-    expire();
-    sweep = setInterval(expire, 5_000);
+    maintain();
+    sweep = setInterval(maintain, 5_000);
     sweep.unref();
   });
-  app.addHook('onClose', async () => clearInterval(sweep));
+  app.addHook('preClose', async () => {
+    clearInterval(sweep);
+    for (const close of streams) close();
+    watcher.close();
+  });
   return app;
 }
 

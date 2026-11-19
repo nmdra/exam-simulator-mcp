@@ -309,6 +309,12 @@ export class ExamRuntime {
       const now = this.clock();
       const ids = this.storage.listExpiredSessionIds(now, limit);
       for (const id of ids) this.expire(this.getSessionRecord(id), now);
+      // Invalidate state once at a manual timeout too, without submitting the attempt.
+      for (const id of this.storage.listUnobservedManualTimeoutIds(now, limit)) {
+        const session = this.getSessionRecord(id);
+        session.timeout_observed = 1;
+        this.persistStateChange(session, now);
+      }
       return ids.length;
     });
   }

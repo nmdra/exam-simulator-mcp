@@ -410,14 +410,23 @@ describe('sessions and answer-key grading', () => {
     const attempt = start(runtime, makeAnswerKeyExam({ auto_submit_on_timeout: false }));
     runtime.recordAnswer(attempt.id, 'truth', false, 0);
     const automatic = start(runtime);
+    const stateKey = `state:${attempt.id}`;
+    const beforeTimeout = runtime.getChangeVersions([stateKey]).get(stateKey)!;
     now = attempt.deadline_at + 15_000;
+    expect(runtime.getState(attempt.id, runtime.authenticateAgent())).toMatchObject({
+      status: 'in_progress', revision: 1, timer: { remaining_seconds: 0, is_expired: true },
+    });
+    expect(runtime.getChangeVersions([stateKey]).get(stateKey)).toBe(beforeTimeout);
     expect(runtime.finalizeExpired()).toBe(1);
     expect(runtime.getSession(automatic.id)).toMatchObject({ status: 'graded', submitted_at: automatic.deadline_at });
     const paused = runtime.getSession(attempt.id);
-    expect(paused).toMatchObject({ status: 'in_progress', expired: true, revision: 1, submitted_at: null, submission_reason: null });
+    expect(paused).toMatchObject({ status: 'in_progress', expired: true, revision: 2, submitted_at: null, submission_reason: null });
+    expect(runtime.getChangeVersions([stateKey]).get(stateKey)).toBe(beforeTimeout + 1);
+    expect(runtime.finalizeExpired()).toBe(0);
+    expect(runtime.getChangeVersions([stateKey]).get(stateKey)).toBe(beforeTimeout + 1);
     expect(runtime.getResults(attempt.id)).toMatchObject({ status: 'in_progress', result: null });
-    expectRuntimeError(() => runtime.recordAnswer(attempt.id, 'truth', true, 1), 'CONFLICT');
-    expectRuntimeError(() => runtime.setFlag(attempt.id, 'truth', true, 1), 'CONFLICT');
+    expectRuntimeError(() => runtime.recordAnswer(attempt.id, 'truth', true, 2), 'CONFLICT');
+    expectRuntimeError(() => runtime.setFlag(attempt.id, 'truth', true, 2), 'CONFLICT');
     expect(runtime.getSession(attempt.id)).toEqual(paused);
     const result = runtime.submitSession(attempt.id);
     expect(result).toMatchObject({
@@ -425,7 +434,7 @@ describe('sessions and answer-key grading', () => {
       result: { correct: 1, earned_points: 1.6 },
     });
     expect(runtime.submitSession(attempt.id)).toEqual(result);
-    expect(runtime.getSession(attempt.id).revision).toBe(2);
+    expect(runtime.getSession(attempt.id).revision).toBe(3);
     expect(runtime.finalizeExpired()).toBe(0);
   });
 });

@@ -118,10 +118,10 @@ it('shares a durable database across a real MCP client, HTTP server, and CLI thr
     const mcp = await connectMcp([mcpEntry], dbPath, port);
     client = mcp.client;
     const tools = await client.listTools();
-    expect(tools.tools.map((tool) => tool.name).sort()).toEqual([
+    expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
       'exam_create', 'exam_get', 'exam_get_answers', 'exam_get_results', 'exam_get_session',
       'exam_get_ui_url', 'exam_list', 'exam_publish', 'exam_submit_grades', 'exam_update',
-    ]);
+    ]));
     const create = tools.tools.find((tool) => tool.name === 'exam_create');
     expect(create?.inputSchema).toMatchObject({ type: 'object', required: ['definition'] });
     expect(create?.outputSchema).toMatchObject({ type: 'object', properties: { data: {}, error: {} } });

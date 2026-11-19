@@ -1,5 +1,6 @@
 import {
-  entityIdSchema, examDefinitionSchema, examStatusSchema, gradingModeSchema, itemIdSchema,
+  agentIdSchema, entityIdSchema, examDefinitionSchema, examModeSchema, examStatusSchema,
+  explanationContentSchema, explanationStatusSchema, explanationTypeSchema, gradingModeSchema, itemIdSchema,
   questionTypeSchema, responseSchema, revisionSchema, sessionStatusSchema, submissionReasonSchema,
 } from '@exam-runtime/schemas';
 import { z } from 'zod';
@@ -30,6 +31,7 @@ export const examSummarySchema = z.strictObject({
 export const examRecordSchema = z.strictObject({
   ...examSummarySchema.pick({ id: true, status: true, created_at: true, updated_at: true }).shape,
   definition: examDefinitionSchema,
+  agent_scope: agentIdSchema.optional(),
 });
 
 const candidateQuestionSchema = z.strictObject({
@@ -62,6 +64,8 @@ export const sessionViewSchema = z.strictObject({
   status: sessionStatusSchema,
   ...sessionTiming,
   revision: revisionSchema,
+  updated_at: timestamp,
+  current_question_id: itemIdSchema,
   server_now: timestamp,
   expired: z.boolean(),
   allow_review: z.boolean(),
@@ -83,6 +87,8 @@ const performance = {
   percent: z.number(),
 };
 
+const questionOutcome = z.enum(['correct', 'incorrect', 'unanswered', 'agent_scored']);
+
 const examResultSchema = z.strictObject({
   ...performance,
   grading_mode: gradingModeSchema,
@@ -96,7 +102,7 @@ const examResultSchema = z.strictObject({
     difficulty,
     question: candidateQuestionSchema,
     response: responseSchema,
-    outcome: z.enum(['correct', 'incorrect', 'unanswered', 'agent_scored']),
+    outcome: questionOutcome,
     earned_points: z.number(),
     maximum_points: z.number(),
     correct_answers: z.array(itemIdSchema).optional(),
@@ -123,7 +129,52 @@ export const examUiSchema = z.discriminatedUnion('available', [
 ]);
 
 export const toolErrorSchema = z.strictObject({
-  code: z.enum(['VALIDATION', 'NOT_FOUND', 'CONFLICT', 'UI_UNAVAILABLE', 'INTERNAL']),
+  code: z.enum(['VALIDATION', 'NOT_FOUND', 'CONFLICT', 'FORBIDDEN', 'UI_UNAVAILABLE', 'INTERNAL']),
   message: z.string(),
   details: z.array(z.strictObject({ path: z.array(z.union([z.string(), count])), message: z.string() })),
+});
+
+export const examStateSchema = z.strictObject({
+  session_id: entityIdSchema,
+  exam_id: entityIdSchema,
+  title: z.string(),
+  subject: z.string(),
+  mode: examModeSchema,
+  status: sessionStatusSchema,
+  revision: revisionSchema,
+  updated_at: z.iso.datetime(),
+  server_now: z.iso.datetime(),
+  deadline_at: z.iso.datetime(),
+  timer: z.strictObject({ duration_seconds: count, elapsed_seconds: count, remaining_seconds: count, is_expired: z.boolean() }),
+  progress: z.strictObject({ total_questions: count, answered: count, unanswered: count, flagged: count, current_question_id: itemIdSchema }),
+  flagged_question_ids: z.array(itemIdSchema),
+  responses: z.array(storedResponsesSchema.element.extend({
+    is_flagged: z.boolean(), selected_answers: z.array(itemIdSchema).optional(),
+  })).optional(),
+  grading: z.strictObject({ status: z.enum(['not_started', 'pending_grading', 'graded']), result_available: z.boolean() }),
+});
+
+export const explanationRequestSummarySchema = z.strictObject({
+  request_id: entityIdSchema,
+  session_id: entityIdSchema,
+  question_id: itemIdSchema,
+  type: explanationTypeSchema,
+  status: explanationStatusSchema,
+  attempt_count: count,
+  created_at: timestamp,
+  updated_at: timestamp,
+});
+
+export const explanationViewSchema = explanationRequestSummarySchema.extend({
+  content: explanationContentSchema.nullable(),
+  completed_at: timestamp.nullable(),
+});
+
+export const explanationDetailSchema = explanationViewSchema.extend({
+  context: z.strictObject({
+    question: candidateQuestionSchema,
+    response: responseSchema,
+    correct_answers: z.array(itemIdSchema).optional(),
+    outcome: questionOutcome.optional(),
+  }),
 });

@@ -12,7 +12,7 @@
   "dependencies": {
     "@exam-runtime/schemas": "0.1.0",
     "@exam-runtime/core": "0.1.0",
-    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@modelcontextprotocol/server": "2.4.0",
     "zod": "^4.6.7"
   }
 }

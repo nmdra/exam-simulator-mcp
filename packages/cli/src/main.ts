@@ -111,13 +111,22 @@ program.command('mcp')
     await runMcp();
   });
 
+const agent = program.command('agent').description('Manage local MCP agent scopes.');
+agent.command('create <id>')
+  .description('Create an agent scope and print its credential once. Keep the token private.')
+  .action((id: string) => {
+    const credential = withRuntime((runtime) => runtime.createAgent(id));
+    writeLine(process.stdout, JSON.stringify(credential));
+  });
+
 const exam = program.command('exam').description('Manage exams and start attempts.');
 
 exam.command('import <file>')
   .description('Import a JSON exam definition as a draft.')
-  .action(async (file: string) => {
+  .option('--agent <id>', 'Assign the exam to an existing MCP agent scope')
+  .action(async (file: string, options: { agent?: string }) => {
     const definition = await readExamFile(file);
-    const imported = withRuntime((runtime) => runtime.createExam(definition));
+    const imported = withRuntime((runtime) => runtime.createExam(definition, options.agent));
     writeLine(process.stdout, `Imported ${examLine(imported)}`);
   });
 
