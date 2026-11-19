@@ -1,8 +1,12 @@
 {
   "name": "exam-runtime",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nmdra/exam-simulator-mcp.git"
+  },
   "engines": {
     "node": ">=26.13.1 <27"
   },
@@ -14,6 +18,8 @@
     "build": "tsc -b && npm run build -w @exam-runtime/web",
     "build:backend": "tsc -b packages/cli packages/mcp",
     "typecheck": "tsc -b",
+    "pack:npm": "npm run build && node scripts/pack-npm.mjs",
+    "test:npm-package": "node scripts/test-npm-package.mjs",
     "test": "npm run build:backend && vitest run",
     "test:watch": "npm run build:backend && vitest",
     "cli": "node packages/cli/dist/main.js",
@@ -24,6 +30,7 @@
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/node": "^26.6.6",
+    "rolldown": "1.2.19",
     "typescript": "^6.0.3",
     "vitest": "^5.1.1"
   }

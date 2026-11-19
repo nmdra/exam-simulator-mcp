@@ -81,6 +81,10 @@ type ExamFilter = { status?: ExamStatus; subject?: string; agent_scope?: string 
 type ExamDefinitionFields = Omit<ExamDefinition, 'questions'>;
 export type StoredExamRecord = Required<ExamRecord>;
 export type StoredSessionRecord = Required<SessionRecord>;
+export type SessionSummary = Pick<StoredSessionRecord, 'exam_id' | 'status' | 'started_at' | 'deadline_at' | 'submitted_at' | 'updated_at'> & {
+  session_id: string;
+};
+export type SessionListFilter = { exam_id?: string; status?: SessionStatus; limit?: number };
 type ExamRow = Omit<StoredExamRecord, 'definition'> & { definition_json: string; questions_json: string };
 type ExamWrite = Omit<ExamRow, 'questions_json' | 'agent_scope'> & { subject: string; agent_scope: string | null };
 type SessionRow = Omit<StoredSessionRecord, 'snapshot'> & { snapshot_json: string };
@@ -328,6 +332,26 @@ export class Storage {
     if (!result) return undefined;
     const { snapshot_json, ...row } = result;
     return { ...row, snapshot: decodeJson<ExamDefinition>(snapshot_json) };
+  }
+
+  listSessions(scope: string, { exam_id, status, limit }: SessionListFilter & { limit: number }): SessionSummary[] {
+    const predicates = ['agent_scope = ?'];
+    const values: (string | number)[] = [scope];
+    if (exam_id !== undefined) {
+      predicates.push('exam_id = ?');
+      values.push(exam_id);
+    }
+    if (status !== undefined) {
+      predicates.push('status = ?');
+      values.push(status);
+    }
+    // Only fixed SQL clauses contribute to the query text. All values are bound.
+    const sql = `
+      SELECT id AS session_id, exam_id, status, started_at, deadline_at, submitted_at, updated_at
+      FROM exam_sessions WHERE ${predicates.join(' AND ')}
+      ORDER BY started_at DESC, id DESC LIMIT ?
+    `;
+    return this.#db.prepare<(string | number)[], SessionSummary>(sql).all(...values, limit);
   }
 
   listExpiredSessionIds(now: number, limit: number): string[] {

@@ -114,6 +114,12 @@ it('routes Phase 2 subscriptions and SSE across separate SDK stdio and API proce
     }
     const own = await start(alpha);
     const other = await start(beta);
+    expect(await tool(alpha, 'exam_list_sessions', {})).toEqual([{
+      session_id: own.id, exam_id: own.exam_id, status: 'in_progress',
+      started_at: own.started_at, deadline_at: own.deadline_at, submitted_at: null, updated_at: own.updated_at,
+    }]);
+    expect(await tool(alpha, 'exam_list_sessions', { exam_id: other.exam_id })).toEqual([]);
+    expect(await call(alpha, 'exam_list_sessions', { limit: 101 })).toMatchObject({ error: { code: 'VALIDATION' } });
     const path = `/sessions/${own.id}`;
     const ownState = `exam://sessions/${own.id}/state`;
     const otherState = `exam://sessions/${other.id}/state`;
@@ -199,6 +205,15 @@ it('routes Phase 2 subscriptions and SSE across separate SDK stdio and API proce
     await serve();
     expect(await http(`${path}/explanations`)).toMatchObject({ requests: [{ ...args, status: 'completed', content }] });
     expect(await tool(alpha, 'exam_get_state', { session_id: own.id })).toMatchObject({ revision: moved.revision, progress: { current_question_id: 'multi' } });
+
+    await http(`${path}/responses/single`, 'PUT', { value: 'b', revision: moved.revision });
+    await http(`${path}/submit`, 'POST', {});
+    const attempts = await tool<{ session_id: string }[]>(alpha, 'exam_list_sessions', { exam_id: own.exam_id, status: 'graded' });
+    expect(attempts).toHaveLength(1);
+    expect(await tool(alpha, 'exam_get_results', { session_id: attempts[0]?.session_id })).toMatchObject({
+      status: 'graded', result: { questions: [{ question_id: 'single', domain: 'Basics', outcome: 'incorrect' },
+        { outcome: 'unanswered' }, { outcome: 'unanswered' }, { outcome: 'unanswered' }] },
+    });
   } finally {
     sseAbort.abort();
     await Promise.allSettled([...clients].map((client) => client.close()));

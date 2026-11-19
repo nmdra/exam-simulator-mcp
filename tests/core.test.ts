@@ -262,6 +262,48 @@ describe('sessions and answer-key grading', () => {
     expect(next).toMatchObject({ responses: [], revision: 0, started_at: now, deadline_at: now + 60_000 });
   });
 
+  it('lists recent attempts only in the exact scope without finalizing expired attempts', () => {
+    const local = runtime.authenticateAgent();
+    const alpha = runtime.createAgent('alpha');
+    const beta = runtime.createAgent('beta');
+    const principal = runtime.authenticateAgent(alpha.agent_id, alpha.token);
+    const alphaExam = runtime.publishExam(runtime.createExam(makeAnswerKeyExam(), alpha.agent_id).id);
+    const betaExam = runtime.publishExam(runtime.createExam(makeAnswerKeyExam(), beta.agent_id).id);
+    const localAttempt = start(runtime);
+    const betaAttempt = runtime.startSession(betaExam.id);
+    const first = runtime.startSession(alphaExam.id);
+    now += 1_000;
+    runtime.recordAnswer(first.id, 'single', 'a', 0);
+    runtime.submitSession(first.id);
+    const submitted = runtime.getSession(first.id);
+    const second = runtime.startSession(alphaExam.id);
+    const third = runtime.startSession(alphaExam.id);
+    const tiedIds = [second.id, third.id].sort().reverse();
+    now = third.deadline_at + 1;
+
+    const listed = runtime.listSessions(principal);
+    expect(listed.map(({ session_id }) => session_id)).toEqual([...tiedIds, first.id]);
+    expect(listed[0]).toEqual({
+      session_id: tiedIds[0], exam_id: alphaExam.id, status: 'in_progress',
+      started_at: third.started_at, deadline_at: third.deadline_at, submitted_at: null, updated_at: third.updated_at,
+    });
+    expect(runtime.getState(third.id, principal)).toMatchObject({ status: 'in_progress', revision: 0 });
+    expect(runtime.listSessions(principal, { exam_id: alphaExam.id, status: 'graded' })).toEqual([{
+      session_id: first.id, exam_id: alphaExam.id, status: 'graded',
+      started_at: first.started_at, deadline_at: first.deadline_at, submitted_at: submitted.submitted_at, updated_at: submitted.updated_at,
+    }]);
+    expect(runtime.listSessions(principal, { status: 'in_progress', limit: 1 })).toEqual([listed[0]]);
+    expect(runtime.listSessions(principal, { exam_id: betaExam.id })).toEqual([]);
+    expect(runtime.listSessions(principal, { exam_id: '00000000-0000-4000-8000-000000000000' })).toEqual([]);
+    expect(runtime.listSessions(local).map(({ session_id }) => session_id)).toEqual([localAttempt.id]);
+    expect(runtime.listSessions(local, { exam_id: betaAttempt.exam_id })).toEqual([]);
+
+    for (let i = 0; i < 20; i++) runtime.startSession(alphaExam.id);
+    expect(runtime.listSessions(principal)).toHaveLength(20);
+    expect(runtime.listSessions(principal, { limit: 100 })).toHaveLength(23);
+    expectRuntimeError(() => runtime.listSessions(principal, { limit: -1 }), 'VALIDATION', ['limit']);
+  });
+
   it('keeps shuffled attempt order without altering the published definition', () => {
     const definition = makeAnswerKeyExam({ shuffle_questions: true });
     for (let i = 1; i <= 12; i++) {

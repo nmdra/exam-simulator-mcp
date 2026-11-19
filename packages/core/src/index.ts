@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
-import { agentGradesSchema, agentIdSchema, examDefinitionSchema, responseSchema, revisionSchema } from '@exam-runtime/schemas';
+import { agentGradesSchema, agentIdSchema, examDefinitionSchema, responseSchema, revisionSchema, sessionListFilterSchema } from '@exam-runtime/schemas';
 import type { ExamFilter, Question, ResponseValue, SubmissionReason } from '@exam-runtime/schemas';
 import { databasePath, openStorage } from '@exam-runtime/storage';
 import type { ExamRecord, SessionRecord, Storage } from '@exam-runtime/storage';
@@ -176,6 +176,10 @@ export class ExamRuntime {
       this.storage.insertSession(session);
       return this.sessionView(session, now);
     });
+  }
+
+  listSessions(principal: AgentPrincipal, filter: unknown = {}) {
+    return this.storage.listSessions(principal.scope, validated(sessionListFilterSchema.safeParse(filter)));
   }
 
   getSession(id: string): SessionView {
