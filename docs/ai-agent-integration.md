@@ -1,12 +1,12 @@
 # Connect an AI agent to Exam Runtime over MCP stdio
 
-Use a local MCP host that can launch a **stdio** server. Start with a chat agent you can prompt to check the explanation queue. Use a background worker or a host with scheduling if you want the agent to handle requests without a chat prompt.
+Use a local MCP host that can start a **stdio** server. Start with a chat agent that can check the explanation queue when you give it a prompt. To handle requests without a chat prompt, use a background worker or an MCP host that can schedule agent runs.
 
-The MCP host launches the compiled server as a child process and exchanges MCP messages over stdin and stdout. There is no MCP HTTP endpoint. The browser uses the separate local HTTP server. Both processes use the same SQLite database. Exam Runtime does not call a model or manage API keys. Your MCP host decides when to run the agent and which data it sends to a model.
+The MCP host starts the compiled server as a child process. The host and the server exchange MCP messages over stdin and stdout. There is no MCP HTTP endpoint. The browser uses the separate local HTTP server. The MCP server and the HTTP server use the same SQLite database. Exam Runtime does not call a model or manage API keys. Your MCP host controls when the agent runs and which data the host sends to a model.
 
 ## 1. Set up a scoped practice exam
 
-Use Node.js `26.13.1` and a fresh working directory for this demo. The public npm package includes the example below, so you do not need to clone the repository. Use the same database path for the HTTP and MCP processes.
+Use Node.js `26.13.1`. Use a new working directory for this example. The public npm package includes the example file. You do not need to clone the repository. Use the same database path for the HTTP server and the MCP server.
 
 ```sh
 command -v npx # Save this absolute npx path for the MCP configuration.
@@ -19,18 +19,18 @@ tar -xOf "$archive" package/examples/practice-assistance.json > practice-assista
 npx --yes exam-runtime-mcp exam import practice-assistance.json --agent practice-tutor
 ```
 
-Save the `token` from `agent create` in your local secret store. The command prints it once. Do not paste it into a model prompt or commit it. Copy the exam ID from `exam import`, then publish and serve it:
+Save the `token` from `agent create` in your local secret store. The command prints the token once. Do not paste the token into a model prompt or commit the token. Copy the exam ID from `exam import`. Use the exam ID to publish the exam. Then start the HTTP server:
 
 ```sh
 npx --yes exam-runtime-mcp exam publish 'EXAM_ID'
 npx --yes exam-runtime-mcp serve
 ```
 
-Replace `EXAM_ID` with the actual ID. Leave the server running. If you already have a server on port `3000`, pick another free port before running `serve` and use that port in the MCP configuration and browser URL. If the scope already exists but you no longer have its token, use a new scope ID and import a fresh copy of the exam with `--agent` set to that ID.
+Replace `EXAM_ID` with the exam ID you copied. Leave the HTTP server running. If a server already uses port `3000`, select an available port before you run `serve`. Use that port in the MCP configuration and the browser URL. If the scope already exists and you do not have its token, use a new scope ID. Import a new copy of the exam with `--agent` set to the new scope ID.
 
 ## 2. Register the MCP server in your agent host
 
-In your host's MCP settings, select **stdio**. Use `npx` to start the published package. For hosts that accept an `mcpServers` JSON object, use this shape:
+In the MCP settings of your host, select **stdio**. Use `npx` to start the published package. If the host accepts an `mcpServers` JSON object, use this configuration format:
 
 ```json
 {
@@ -49,17 +49,17 @@ In your host's MCP settings, select **stdio**. Use `npx` to start the published 
 }
 ```
 
-Use the host's method for injecting the real token into the spawned process. Set **both** agent variables. If both are omitted, the server uses the trusted local operator profile, not the intended agent scope. The host needs Node.js `26.13.1` on its `PATH` and access to the database. Do not point it at the browser URL or expose the HTTP server to connect a remote-only host.
+Use the host's method to supply the actual token to the child process. Set **both** agent variables. If you omit both variables, the MCP server uses the trusted local operator profile, not the specified agent scope. The host must have Node.js `26.13.1` on its `PATH` and access to the database. Do not configure the MCP host to use the browser URL. Do not expose the HTTP server to connect a remote-only host.
 
-When testing a local build, run `npm run pack:npm` in the repository and use `["--yes", "--package=/absolute/path/to/exam-runtime-mcp-VERSION.tgz", "exam-runtime", "mcp"]` as the arguments. To run from source without `npx`, use the [direct Node.js configuration](runtime-reference.md#mcp-over-stdio).
+To test a local build, run `npm run pack:npm` in the repository. Use `["--yes", "--package=/absolute/path/to/exam-runtime-mcp-VERSION.tgz", "exam-runtime", "mcp"]` as the arguments. To run from source without `npx`, use the [direct Node.js configuration](runtime-reference.md#mcp-over-stdio).
 
-Reload the host's MCP configuration. Ask the agent to call `exam_list` with `{"status":"published"}`. It should find **Backup and Recovery Practice** in its scope. Ask it to call `exam_get_ui_url` with that exam ID if you want to check the URL through MCP. An overview link does not start the timer.
+Reload the host's MCP configuration. Ask the agent to call `exam_list` with `{"status":"published"}`. The agent should find **Backup and Recovery Practice** in its scope. To check the URL through MCP, ask the agent to call `exam_get_ui_url` with that exam ID. An overview link does not start the timer.
 
 ## 3. Test a chat agent
 
-1. Open `http://127.0.0.1:3000/exams/EXAM_ID` in the browser, using your real port and exam ID. Click **Start Exam**, then **Request Hint**. The browser should show **Waiting for AI agent**.
-2. Prompt the agent as shown below. If the mock client is already running against the same scope, stop it first so it does not complete the request before the agent claims it.
-3. Confirm the hint appears under **Explanations** without a reload. Reload the page and check that it is still there.
+1. Open `http://127.0.0.1:3000/exams/EXAM_ID` in the browser. Use your port and exam ID in the URL. Click **Start Exam**. Then click **Request Hint**. The browser should show **Waiting for AI agent**.
+2. If the mock client is running in the same scope, stop it before you prompt the agent. This prevents the mock client from completing the request before the agent claims it. Prompt the agent as shown below.
+3. Check that the hint appears under **Explanations** without a reload. Reload the page. Check that the hint is still there.
 
 ### Copyable agent prompt
 
@@ -82,37 +82,37 @@ Use the Exam Runtime MCP server to fulfill one pending browser explanation reque
    and completion status. The candidate reads the content in the browser.
 ```
 
-The claim lasts two minutes. Prepare the response promptly and submit it with the same token. The server can return expired claims to the queue. If a submission response is lost, retry with the **same token and unchanged content**. If a claim expired or another worker claimed the request, reread the queue rather than reusing a stale token. The [MCP tool reference](runtime-reference.md#tools) lists the full input shapes and content limits.
+The claim lasts two minutes. Prepare the response promptly. Submit the response with the same token. The server can return expired claims to the queue. If you do not receive the response to a submission, retry with the **same token and unchanged content**. If the claim expired or a different worker claimed the request, read the queue again. Do not reuse the earlier token in those cases. The [MCP tool reference](runtime-reference.md#tools) lists the complete input formats and content limits.
 
 ## 4. Create practice and adapt the next round
 
-Ask the agent to use `exam_create`, `exam_publish`, and `exam_get_ui_url` to make and share a practice set. It can use the [example definition](../examples/practice-assistance.json) as a template. The overview link does not start the timer or show answer keys.
+Ask the agent to create and share a practice exam with `exam_create`, `exam_publish`, and `exam_get_ui_url`. The agent can use the [example definition](../examples/practice-assistance.json) as a template. The overview link does not start the timer or show answer keys.
 
-After you submit, ask the agent to call `exam_list_sessions` with `{"exam_id":"EXAM_ID","status":"graded","limit":5}`, using the exam ID it received from `exam_create`. The list is newest-first and contains no candidate answers or keys. If multiple attempts could match, ask the agent to confirm which one to review. It can call `exam_get_results` using that attempt's `session_id`, explain missed concepts, and create a short follow-up quiz for the weakest topics.
+After you submit the exam, ask the agent to call `exam_list_sessions` with `{"exam_id":"EXAM_ID","status":"graded","limit":5}`. Tell the agent to use the exam ID from `exam_create`. The list shows the newest attempts first. It does not contain candidate answers or answer keys. If more than one attempt can match, ask the agent to confirm which attempt to review. The agent can call `exam_get_results` with the `session_id` for that attempt. The agent can then explain the concepts you missed and create a short follow-up quiz on your weakest topics.
 
-`exam_list_sessions` requires version `0.1.1` or later. On older versions, copy the session ID from the browser URL. Exam Runtime keeps results in SQLite, but it does not maintain model-side learning history automatically.
+`exam_list_sessions` requires version `0.1.1` or later. If you use an earlier version, copy the session ID from the browser URL. Exam Runtime stores results in SQLite. It does not automatically maintain learning history in the model.
 
 ## 5. Run an unattended worker (optional)
 
-Build from the [mock subscription client](../examples/explanation-subscription-client.ts). It shows the transport, initial reads, reconnect handling, claim lifecycle, and polling fallback. Replace the deterministic content generator with a call to your own agent host. Send the model only the permitted question context and request type. Keep agent and claim tokens in the worker, not in the model prompt or logs.
+Use the [mock subscription client](../examples/explanation-subscription-client.ts) as a starting point. The client shows the transport, initial reads, reconnection, claim lifecycle, and polling fallback. Replace the deterministic content generator with a call to your agent host. Send only the permitted question context and request type to the model. Keep agent and claim tokens in the worker. Do not put these tokens in a model prompt or logs.
 
-- **Modern MCP (`2026-07-28`):** Handle `notifications/resources/updated` and subscribe with `subscriptions/listen`, passing the concrete URIs in `notifications.resourceSubscriptions`. Use `exam://agents/practice-tutor/explanations/pending` for work and optionally `exam://sessions/SESSION_ID/state` for live progress. Check the honored URIs. Call `resources/read` immediately after subscribing, after each update, and after reconnect. A notification only tells the worker to reread; it does not contain the work or invoke an agent.
-- **Tools-only host:** On each prompted run, call `explanation_requests_list` with `{"status":"pending"}` and `exam_get_state` with the session ID when you need progress. If your host supports a background loop, call the same tools at a bounded interval. A chat prompt alone does not keep a worker running between turns.
+- **Modern MCP (`2026-07-28`):** Handle `notifications/resources/updated`. Subscribe with `subscriptions/listen`. Specify the concrete URIs in `notifications.resourceSubscriptions`. Use `exam://agents/practice-tutor/explanations/pending` for pending explanation requests. For live progress, you can also use `exam://sessions/SESSION_ID/state`. Check which URIs the server accepted. Call `resources/read` immediately after you subscribe, after each update, and after you reconnect. A notification only tells the worker to read the resource again. It does not contain the work or start an agent.
+- **Tools-only host:** Each time you prompt the agent to run, call `explanation_requests_list` with `{"status":"pending"}`. When you need to check progress, call `exam_get_state` with the session ID. If the host supports a background loop, call the same tools at a bounded interval. A chat prompt alone does not keep a worker running between turns.
 
 ## 6. Grade a submitted attempt (optional)
 
-Grading is separate from explanations. The practice demo uses an answer key, so there is nothing for an agent to grade. To test grading, create or import an exam with `grading.mode: "agent_graded"` in the same scope. See the [agent grading smoke test](runtime-reference.md#baseline-grading) for a sample definition.
+Grading is separate from explanations. The practice example uses an answer key. The agent does not grade this example. To test agent grading, create or import an exam with `grading.mode: "agent_graded"` in the same scope. See the [agent grading smoke test](runtime-reference.md#baseline-grading) for a sample definition.
 
-After the candidate submits, copy the session ID from the browser URL. Instruct the agent to call `exam_get_results` and proceed only if the status is `pending_grading`. Read the questions and saved responses with `exam_get_session`. Give the grading agent a rubric with the point limit for each question. Score against that rubric and call `exam_submit_grades` with one entry per question, including unanswered questions. Each `score` must be between zero and the question's maximum. Read `exam_get_results` again and confirm the browser shows the final score. Review model-generated scores for correctness before submitting them when they matter.
+After the candidate submits the exam, copy the session ID from the browser URL. Instruct the agent to call `exam_get_results`. Tell the agent to continue only if the status is `pending_grading`. Read the questions and saved responses with `exam_get_session`. Give the grading agent a rubric with the point limit for each question. Use that rubric to score the responses. Call `exam_submit_grades` with one entry per question. Include unanswered questions. Each `score` must be between zero and the maximum for that question. Call `exam_get_results` again. Check that the browser shows the final score. When the scores matter, check that model-generated scores are correct before you submit them.
 
 ## Troubleshooting
 
 | Symptom | Check |
 | --- | --- |
-| The host cannot start MCP | Check the absolute `npx` path, the host's Node.js version, and its MCP error log. Check that the configured npm version or local tarball exists. |
-| `FORBIDDEN` | Check that both agent variables are set and use the token issued for this scope and database. If only an explanation call fails, check the exam's assistance policy. |
-| `NOT_FOUND` or an empty exam list | Check the shared database path, the scope given to `exam import --agent`, and the exam or session ID. |
-| There is no **Request Hint** button | Use the practice example. Active `exam` attempts never allow assistance. The deadline and review settings can also make it unavailable. |
-| The request stays at **Waiting for AI agent** | Prompt the agent to check the queue or start a worker. Verify it submits through `explanation_submit`, not just in chat. |
+| The host cannot start MCP | Check the absolute `npx` path, the host's Node.js version, and the MCP error log for the host. Check that the configured npm version or local tarball exists. |
+| `FORBIDDEN` | Check that both agent variables are set. Use the token for this scope and database. If only an explanation call fails, check the exam's assistance policy. |
+| `NOT_FOUND` or an empty exam list | Check the shared database path, the scope for `exam import --agent`, and the exam or session ID. |
+| There is no **Request Hint** button | Use the practice example. Active `exam` attempts never permit assistance. The deadline and review settings can also prevent assistance. |
+| The request stays at **Waiting for AI agent** | Ask the agent to check the queue or start a worker. Check that the agent or worker submits the explanation with `explanation_submit`, not only in chat. |
 
-Use a trusted agent with a scope limited to the exams it needs. A scope does not hide that scope's answer keys from trusted tools such as `exam_get`. The app stores data locally, but a hosted model or agent host may receive exam content and candidate answers through tool calls. Check the host's data policy before using private material. Do not use this setup as a public or proctored exam service.
+Use a trusted agent. Limit the agent's scope to the exams the agent needs. Trusted tools such as `exam_get` can read answer keys within that scope. Exam Runtime stores data locally. A hosted model or agent host may receive exam content and candidate answers through tool calls. Check the host's data policy before you use private material. Do not use this setup as a public or proctored exam service.
