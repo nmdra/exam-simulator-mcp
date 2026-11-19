@@ -1,0 +1,160 @@
+{
+  "schema_version": "1.0",
+  "exam": {
+    "title": "AWS Cloud Practice Exam",
+    "description": "Ten original practice questions on operating and designing AWS workloads. This independent practice exam is not an official AWS certification exam.",
+    "instructions": "Choose one answer for each single-select or true/false question. For each multi-select question, choose the stated number of answers. You earn points only if your selection contains every correct answer and no incorrect answers. Incorrect and unanswered questions earn zero points. Questions 3 and 9 are worth two points each. All other questions are worth one point each. You can review your answers before you submit.",
+    "subject": "AWS Cloud",
+    "difficulty": "Mixed",
+    "mode": "exam",
+    "duration_minutes": 15,
+    "shuffle_questions": false,
+    "allow_review": true,
+    "auto_submit_on_timeout": true
+  },
+  "grading": {
+    "mode": "answer_key",
+    "correct_points": 1,
+    "incorrect_points": 0,
+    "unanswered_points": 0,
+    "passing_percent": 70,
+    "levels": [
+      { "name": "Needs Review", "min_percent": 0 },
+      { "name": "Proficient", "min_percent": 70 },
+      { "name": "Advanced", "min_percent": 90 }
+    ]
+  },
+  "questions": [
+    {
+      "id": "q01",
+      "type": "single_select",
+      "domain": "Security and Identity",
+      "difficulty": "Foundational",
+      "text": "An application on an Amazon EC2 instance needs to read objects under one prefix in an Amazon S3 bucket. How should the team give the application AWS credentials without storing long-lived access keys on the instance?",
+      "options": [
+        { "id": "a", "text": "Store an IAM user's access keys in the EC2 user data." },
+        { "id": "b", "text": "Attach an instance profile with an IAM role that grants read access to objects under that prefix." },
+        { "id": "c", "text": "Create an IAM role for the application and give the instance only the role ARN." },
+        { "id": "d", "text": "Store an IAM user's access keys in an encrypted file on the instance." }
+      ],
+      "correct_answers": ["b"]
+    },
+    {
+      "id": "q02",
+      "type": "single_select",
+      "domain": "Compute and Resilience",
+      "difficulty": "Intermediate",
+      "text": "A stateless web service uses EC2 instances behind an internet-facing Application Load Balancer. Which design lets the service continue to serve traffic if one Availability Zone fails?",
+      "options": [
+        { "id": "a", "text": "Run the EC2 instances on separate hosts in one Availability Zone." },
+        { "id": "b", "text": "Enable two Availability Zones on the load balancer but place all EC2 instances in one zone." },
+        { "id": "c", "text": "Keep capacity in one Availability Zone and launch replacement instances in a second zone only after a failure." },
+        { "id": "d", "text": "Enable at least two Availability Zones on the load balancer and run healthy EC2 capacity in each, with enough capacity to handle traffic after losing one zone." }
+      ],
+      "correct_answers": ["d"]
+    },
+    {
+      "id": "q03",
+      "type": "multi_select",
+      "domain": "Application Integration",
+      "difficulty": "Advanced",
+      "text": "Workers consume inventory adjustment events from an Amazon SQS standard queue and write each adjustment to a database. The database supports transactions and unique constraints. A worker can fail immediately before or after the database commit. Which two actions let the workers retry failed processing without applying the same adjustment twice?",
+      "options": [
+        { "id": "a", "text": "In the same database transaction as the adjustment, record the event's stable unique ID and skip the adjustment if that ID is already recorded." },
+        { "id": "b", "text": "Delete the message as soon as the worker receives it, before writing to the database." },
+        { "id": "c", "text": "Use the message receipt handle as the permanent event ID in the database." },
+        { "id": "d", "text": "Set a visibility timeout longer than the expected processing time and assume that this prevents duplicate delivery." },
+        { "id": "e", "text": "Delete the message only after the adjustment commits or the worker confirms that the event was already committed." }
+      ],
+      "correct_answers": ["a", "e"],
+      "points": { "correct_points": 2 }
+    },
+    {
+      "id": "q04",
+      "type": "true_false",
+      "domain": "Databases",
+      "difficulty": "Foundational",
+      "text": "When you create an Amazon DynamoDB table in on-demand capacity mode, you must specify its provisioned read and write capacity units.",
+      "correct_answers": ["false"]
+    },
+    {
+      "id": "q05",
+      "type": "single_select",
+      "domain": "Networking",
+      "difficulty": "Intermediate",
+      "text": "EC2 instances in a private subnet have no public IPv4 addresses. They need to download patches over the public IPv4 internet without accepting unsolicited inbound internet connections. The VPC has a public subnet with a route to an internet gateway. What should the team configure?",
+      "options": [
+        { "id": "a", "text": "Create a public NAT gateway in the public subnet and route internet-bound traffic from the private subnet to it." },
+        { "id": "b", "text": "Route internet-bound traffic from the private subnet directly to the internet gateway." },
+        { "id": "c", "text": "Create an S3 gateway endpoint and route traffic for the public patch repositories through it." },
+        { "id": "d", "text": "Create a private NAT gateway and route its internet-bound traffic to the internet gateway." }
+      ],
+      "correct_answers": ["a"]
+    },
+    {
+      "id": "q06",
+      "type": "single_select",
+      "domain": "Databases",
+      "difficulty": "Intermediate",
+      "text": "An Amazon Aurora cluster has one writer and two Aurora Replicas. A reporting service opens multiple database connections and can tolerate replica lag. Which endpoint distributes new reporting connections among the available replicas?",
+      "options": [
+        { "id": "a", "text": "The cluster writer endpoint" },
+        { "id": "b", "text": "The instance endpoint for one Aurora Replica" },
+        { "id": "c", "text": "The cluster reader endpoint" },
+        { "id": "d", "text": "The instance endpoint for the current writer" }
+      ],
+      "correct_answers": ["c"]
+    },
+    {
+      "id": "q07",
+      "type": "multi_select",
+      "domain": "Monitoring and Operations",
+      "difficulty": "Intermediate",
+      "text": "An application writes structured error events to Amazon CloudWatch Logs. The operations team wants a notification when more than 20 matching error events arrive in a five-minute period. Which two steps meet this requirement without changing the application?",
+      "options": [
+        { "id": "a", "text": "Set log retention to five minutes so that CloudWatch reports the error count at the end of each period." },
+        { "id": "b", "text": "Create a CloudWatch Logs metric filter that publishes a value of 1 for each matching error event." },
+        { "id": "c", "text": "Save a CloudWatch Logs Insights query and rely on saving the query to send threshold notifications." },
+        { "id": "d", "text": "Create a CloudWatch alarm that triggers when the metric's five-minute Sum exceeds 20, with Amazon SNS as the notification action." }
+      ],
+      "correct_answers": ["b", "d"]
+    },
+    {
+      "id": "q08",
+      "type": "true_false",
+      "domain": "Storage",
+      "difficulty": "Foundational",
+      "text": "After a successful write to an Amazon S3 general purpose bucket, a direct read of the same object in that bucket returns the new data, assuming no other operation changes the object.",
+      "correct_answers": ["true"]
+    },
+    {
+      "id": "q09",
+      "type": "multi_select",
+      "domain": "Infrastructure as Code",
+      "difficulty": "Advanced",
+      "text": "Before updating an AWS CloudFormation stack, a team wants to identify supported resources that differ from their current template configuration and preview whether the proposed update will replace any resources. Which two actions should the team take?",
+      "options": [
+        { "id": "a", "text": "Run stack drift detection and review the resource drift results." },
+        { "id": "b", "text": "Validate the proposed template and use the validation output as the list of resources that will be replaced." },
+        { "id": "c", "text": "Create a change set for the proposed template and inspect the replacement details before executing it." },
+        { "id": "d", "text": "Enable termination protection and use it to identify which resources differ from the current template." }
+      ],
+      "correct_answers": ["a", "c"],
+      "points": { "correct_points": 2 }
+    },
+    {
+      "id": "q10",
+      "type": "single_select",
+      "domain": "Cost Optimization",
+      "difficulty": "Foundational",
+      "text": "A batch workload runs on EC2, saves checkpoints frequently, and can resume after an interruption. Jobs have flexible deadlines. Which EC2 purchasing option lets the team use spare capacity at a discount?",
+      "options": [
+        { "id": "a", "text": "On-Demand Instances" },
+        { "id": "b", "text": "Standard Reserved Instances" },
+        { "id": "c", "text": "Dedicated Hosts" },
+        { "id": "d", "text": "Spot Instances" }
+      ],
+      "correct_answers": ["d"]
+    }
+  ]
+}
