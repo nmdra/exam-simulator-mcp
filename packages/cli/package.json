@@ -1,0 +1,15 @@
+{
+  "name": "@exam-runtime/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@exam-runtime/core": "0.1.0",
+    "@exam-runtime/mcp": "0.1.0",
+    "@exam-runtime/server": "0.1.0",
+    "commander": "^15.1.0"
+  },
+  "bin": {
+    "exam-runtime": "./bin/exam-runtime.js"
+  }
+}

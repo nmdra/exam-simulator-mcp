@@ -1,0 +1,19 @@
+{
+  "name": "@exam-runtime/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@exam-runtime/core": "0.1.0",
+    "@exam-runtime/schemas": "0.1.0",
+    "@fastify/static": "^10.1.11",
+    "fastify": "^5.12.8",
+    "zod": "^4.6.7"
+  }
+}
